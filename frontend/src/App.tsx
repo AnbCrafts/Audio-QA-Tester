@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { UploadDropzone } from './components/UploadDropzone';
 import { ToneCard } from './components/ToneCard';
@@ -18,6 +18,27 @@ export const App: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
   const [seekTime, setSeekTime] = useState<number | null>(null);
+  const [isBackendConnected, setIsBackendConnected] = useState(false);
+
+  // Check backend health on mount
+  useEffect(() => {
+    const checkBackend = async () => {
+      try {
+        const res = await fetch('http://127.0.0.1:8000/api/health');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'healthy') {
+            setIsBackendConnected(true);
+          }
+        }
+      } catch (err) {
+        setIsBackendConnected(false);
+      }
+    };
+    checkBackend();
+    const interval = setInterval(checkBackend, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const activePreset =
     BUSINESS_PRESETS.find((p) => p.id === config.presetId) || BUSINESS_PRESETS[0];
@@ -56,7 +77,10 @@ export const App: React.FC = () => {
 
       if (resp && resp.ok) {
         const data = await resp.json();
-        setCurrentReport(data);
+        setCurrentReport({
+          ...data,
+          audioUrl: URL.createObjectURL(file),
+        });
         setIsProcessing(false);
         return;
       }
@@ -87,6 +111,7 @@ export const App: React.FC = () => {
         callId: `call_${Date.now()}`,
         fileName: file.name,
         fileSize: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+        audioUrl: URL.createObjectURL(file),
         uploadedAt: 'Just now',
         configUsed: config,
       });
@@ -111,7 +136,7 @@ export const App: React.FC = () => {
         onOpenConfig={() => setIsConfigOpen(true)}
         onLoadGreenDemo={handleLoadGreenDemo}
         onLoadRedDemo={handleLoadRedDemo}
-        isBackendConnected={false}
+        isBackendConnected={isBackendConnected}
       />
 
       {/* Main Container */}
@@ -130,6 +155,7 @@ export const App: React.FC = () => {
           fileName={currentReport.fileName}
           fileSize={currentReport.fileSize}
           durationStr={currentReport.duration}
+          audioUrl={currentReport.audioUrl}
           seekTime={seekTime}
         />
 

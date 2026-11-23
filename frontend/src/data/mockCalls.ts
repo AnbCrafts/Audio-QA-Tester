@@ -3,8 +3,9 @@ import { AnalysisReport } from '../types';
 export const MOCK_GREEN_CALL: AnalysisReport = {
   callId: 'call_demo_green_101',
   fileName: 'acme_saas_discovery_call_green.m4a',
-  fileSize: '4.8 MB',
-  duration: '04:12',
+  fileSize: '543 KB',
+  duration: '01:15',
+  audioUrl: '/test_call_green.m4a',
   uploadedAt: 'Today at 10:45 AM',
   status: 'completed',
   configUsed: {
@@ -173,8 +174,9 @@ export const MOCK_GREEN_CALL: AnalysisReport = {
 export const MOCK_RED_CALL: AnalysisReport = {
   callId: 'call_demo_red_202',
   fileName: 'client_inquiry_hostile_rep_red.m4a',
-  fileSize: '3.6 MB',
-  duration: '03:05',
+  fileSize: '375 KB',
+  duration: '00:52',
+  audioUrl: '/test_call_red.m4a',
   uploadedAt: 'Today at 11:15 AM',
   status: 'completed',
   configUsed: {

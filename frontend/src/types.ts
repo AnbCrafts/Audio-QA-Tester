@@ -68,6 +68,7 @@ export interface AnalysisReport {
   fileName: string;
   fileSize: string;
   duration: string;
+  audioUrl?: string | null;
   uploadedAt: string;
   tone: ToneAnalysisResult;
   actionItems: ActionItem[];

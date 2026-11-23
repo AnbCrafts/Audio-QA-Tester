@@ -61,6 +61,22 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-3">
+          {/* Backend Connection Status Badge */}
+          <div
+            className={`hidden lg:flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+              isBackendConnected
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+            }`}
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                isBackendConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+              }`}
+            />
+            <span>{isBackendConnected ? 'Dual Engine Connected' : 'Local Demo Mode'}</span>
+          </div>
+
           {/* Active Preset Tag */}
           <button
             onClick={onOpenConfig}
