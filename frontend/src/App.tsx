@@ -299,13 +299,26 @@ export const App: React.FC = () => {
                   </>
                 )}
               </div>
-              <button
-                onClick={handleReset}
-                className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                Upload Another Call
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    await fetch(`${API_BASE_URL}/api/cache`, { method: 'DELETE' }).catch(() => {});
+                    handleReset();
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-amber-400 hover:text-amber-300 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
+                  title="Clear server cache to re-run fresh analysis"
+                >
+                  <Zap className="h-3.5 w-3.5 text-amber-400" />
+                  Clear Cache
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Upload Another Call
+                </button>
+              </div>
             </div>
 
             {/* Audio Player Bar */}

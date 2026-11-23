@@ -40,6 +40,20 @@ def health_check():
         "groq_configured": bool(groq_key)
     }
 
+@app.delete("/api/cache")
+def clear_cache():
+    from cache_service import CACHE_DIR
+    cleared_count = 0
+    if os.path.exists(CACHE_DIR):
+        for f in os.listdir(CACHE_DIR):
+            if f.endswith(".json"):
+                try:
+                    os.remove(os.path.join(CACHE_DIR, f))
+                    cleared_count += 1
+                except OSError:
+                    pass
+    return {"status": "cache_cleared", "deleted_files": cleared_count}
+
 @app.post("/api/analyze", response_model=AnalysisReport)
 async def analyze_call(
     file: UploadFile = File(...),
