@@ -81,18 +81,22 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
     1. COMPLETE UNABRIDGED TRANSCRIPT: You MUST transcribe the entire audio conversation from 00:00 to the very end.
        Do NOT summarize, skip, truncate, or omit any dialogue turns. Every single spoken utterance by either the
        Sales Representative or Customer must appear as a separate turn in the 'transcript' array.
-    2. MULTILINGUAL ACCURACY: The call may be in Hindi, Hinglish (mixed Hindi-English), English, or regional dialect.
-       Preserve the actual spoken dialogue text faithfully (e.g. in Hindi/Hinglish).
+    2. MULTILINGUAL ACCURACY & CODE-SWITCHING: The call may be in Hindi, Hinglish (mixed Hindi-English), English, or regional dialect.
+       Preserve the actual spoken dialogue text faithfully verbatim (e.g. in Hindi/Hinglish).
     3. ACCURATE TIMESTAMPS: Each transcript segment must include the exact start timestamp ("MM:SS") and integer seconds.
-    4. SPEAKER DIARIZATION: Correctly identify the speaker ("Sales Rep" vs "Customer") for each turn.
-       Set isFlaggedEvidence=true on any transcript segment where an action item was dictated or where key tone evidence occurred.
+    4. SPEAKER DIARIZATION & IVR HANDLING: Correctly identify the speaker ("Sales Rep" vs "Customer") for each turn.
+       If an automated bot, IVR preamble, or call recording disclaimer speaks at the beginning, label it "IVR" and do NOT attribute it to the Sales Rep.
+    5. SILENCE / HOLD MUSIC: Disregard long hold music, ringing, or silent intervals. Do not invent utterances during pauses.
 
     EVALUATION & COMMITMENT REQUIREMENTS:
     1. TONE QUALITY EVALUATION: Evaluate ONLY the Sales Representative's demeanor against the configured rubric.
        Mark RED if negative, rude, hostile, dismissive, or violating criteria; otherwise mark GREEN.
+       Distinguish concise transactional bargaining from genuine hostility.
        Support the rating with verbatim evidence quotes and exact timestamps.
-    2. GROUNDED ACTION ITEMS:
-       Extract all concrete commitments, requested goods/quantities, or next steps dictated during the call.
+    2. GROUNDED ACTION ITEMS (REJECT CONDITIONAL PROMISES):
+       Extract all confirmed commitments, requested items/quantities, or next steps dictated during the call.
+       DO NOT extract speculative statements with hedge phrases ("maybe", "if possible", "if approved", "might").
+       Ensure owner strictly reflects who made the commitment ("Sales Rep" or "Customer").
        Include the exact 'timestamp' ("MM:SS") and 'seconds' where the commitment was stated in the call.
        NEVER invent deadlines or owners. If no deadline was explicitly spoken, set deadline to null.
 
@@ -218,15 +222,94 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
     raise RuntimeError("All Groq models failed")
 
 def _build_report_from_json(data: dict, filename: str, file_size_str: str, config: AnalysisConfigInput) -> AnalysisReport:
+    """
+    Safely constructs and sanitizes an AnalysisReport from raw LLM output,
+    ensuring defensive clamping on scores, valid defaults, and null-coercion.
+    """
+    tone_raw = data.get("tone", {})
+    breakdown_raw = tone_raw.get("sentimentBreakdown", {}) if isinstance(tone_raw, dict) else {}
+
+    sentiment_breakdown = SentimentBreakdown(
+        repProfessionalism=max(0, min(100, int(breakdown_raw.get("repProfessionalism", 85)))),
+        repEmpathy=max(0, min(100, int(breakdown_raw.get("repEmpathy", 80)))),
+        repPatience=max(0, min(100, int(breakdown_raw.get("repPatience", 85)))),
+        customerFrustration=max(0, min(100, int(breakdown_raw.get("customerFrustration", 25)))),
+    )
+
+    evidence_quotes = []
+    for eq in tone_raw.get("evidenceQuotes", []):
+        if isinstance(eq, dict) and eq.get("quote"):
+            evidence_quotes.append(EvidenceQuote(
+                quote=str(eq.get("quote", "")).strip(),
+                speaker=str(eq.get("speaker", "Sales Rep")).strip(),
+                explanation=str(eq.get("explanation", "")).strip(),
+                timestamp=str(eq.get("timestamp") or "00:00").strip()
+            ))
+
+    tone_result = ToneAnalysisResult(
+        rating="RED" if str(tone_raw.get("rating", "")).upper() == "RED" else "GREEN",
+        headline=str(tone_raw.get("headline", "Tone Analysis Completed")),
+        explanation=str(tone_raw.get("explanation", "")),
+        evidenceQuotes=evidence_quotes,
+        confidenceScore=max(0, min(100, int(tone_raw.get("confidenceScore", 90)))),
+        sentimentBreakdown=sentiment_breakdown
+    )
+
+    action_items = []
+    for idx, item in enumerate(data.get("actionItems", [])):
+        if not isinstance(item, dict) or not item.get("task"):
+            continue
+        raw_dl = item.get("deadline")
+        clean_deadline = str(raw_dl).strip() if raw_dl and str(raw_dl).lower() not in ("null", "none", "n/a") else None
+
+        sec = 0
+        if isinstance(item.get("seconds"), (int, float)):
+            sec = int(item.get("seconds"))
+
+        action_items.append(ActionItem(
+            id=str(item.get("id") or f"act-{idx+1}"),
+            task=str(item.get("task", "")).strip(),
+            owner=str(item.get("owner", "Sales Rep")).strip(),
+            deadline=clean_deadline,
+            evidenceQuote=str(item.get("evidenceQuote", "")).strip(),
+            timestamp=str(item.get("timestamp") or "00:00").strip(),
+            seconds=sec,
+            confidence=max(0, min(100, int(item.get("confidence", 85))))
+        ))
+
+    transcript_segments = []
+    for idx, seg in enumerate(data.get("transcript", [])):
+        if not isinstance(seg, dict):
+            continue
+        speaker_str = str(seg.get("speaker", "Speaker")).strip()
+        is_rep_val = seg.get("isRep")
+        if is_rep_val is None:
+            is_rep_val = ("rep" in speaker_str.lower() or "sales" in speaker_str.lower())
+        
+        sec = 0
+        if isinstance(seg.get("seconds"), (int, float)):
+            sec = int(seg.get("seconds"))
+
+        transcript_segments.append(TranscriptSegment(
+            id=str(seg.get("id") or f"t-{idx+1}"),
+            speaker=speaker_str,
+            isRep=bool(is_rep_val),
+            timestamp=str(seg.get("timestamp", "00:00")).strip(),
+            seconds=sec,
+            text=str(seg.get("text", "")).strip(),
+            isFlaggedEvidence=bool(seg.get("isFlaggedEvidence", False))
+        ))
+
     return AnalysisReport(
         callId=f"call_{int(time.time())}",
         fileName=filename,
         fileSize=file_size_str,
-        duration=data.get("duration", "01:54"),
+        duration=str(data.get("duration", "01:54")),
         uploadedAt="Just now",
         status="completed",
-        tone=ToneAnalysisResult(**data["tone"]),
-        actionItems=[ActionItem(**item) for item in data.get("actionItems", [])],
-        transcript=[TranscriptSegment(**seg) for seg in data.get("transcript", [])],
+        tone=tone_result,
+        actionItems=action_items,
+        transcript=transcript_segments,
         configUsed=config,
+        cached=False,
     )

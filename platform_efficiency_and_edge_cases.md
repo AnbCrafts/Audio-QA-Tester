@@ -105,6 +105,6 @@ To maintain high code quality and avoid convoluted, unreadable AI-generated code
   * Add `URL.revokeObjectURL()` cleanup in React to prevent browser memory leaks.
 - [x] **Step 3: Response Caching & Performance**
   * Implement audio file hash caching (SHA-256) to avoid redundant API billing and provide instant responses for re-uploaded calls.
-- [ ] **Step 4: Edge Case Robustness**
+- [x] **Step 4: Edge Case Robustness**
   * Refine prompts to reject conditional commitments.
   * Implement silence/hold music mitigation rules.
