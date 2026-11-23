@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import tempfile
+import asyncio
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -79,8 +80,9 @@ async def analyze_call(
         tmp_file.write(content)
 
     try:
-        # Run AI Analysis Pipeline
-        report = analyze_call_with_ai(
+        # Run AI Analysis Pipeline in thread pool to prevent blocking the asyncio event loop
+        report = await asyncio.to_thread(
+            analyze_call_with_ai,
             file_path=tmp_path,
             filename=filename,
             file_size_str=file_size_mb,

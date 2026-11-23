@@ -78,7 +78,8 @@ export const App: React.FC = () => {
       formData.append('config', JSON.stringify(config));
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+      // Generous 5-minute timeout for multi-minute calls or high AI API load
+      const timeoutId = setTimeout(() => controller.abort(), 300000);
 
       const step1Timer = setTimeout(() => {
         setProcessingStep('Transcribing audio turns (multilingual Hindi/Hinglish/English)...');
@@ -86,11 +87,11 @@ export const App: React.FC = () => {
 
       const step2Timer = setTimeout(() => {
         setProcessingStep('Isolating Sales Rep dialogue & scoring tone against rubric...');
-      }, 8000);
+      }, 10000);
 
       const step3Timer = setTimeout(() => {
         setProcessingStep('Extracting evidence-backed commitments & action items...');
-      }, 14000);
+      }, 20000);
 
       const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: 'POST',
@@ -120,7 +121,11 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Analysis error:', err);
-      setErrorMessage(err.message || 'Failed to connect to backend server. Please make sure the FastAPI server is running on port 8000.');
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        setErrorMessage('The analysis request timed out. Large recordings or high API server demand can cause delays. Please try again or switch to the Groq fallback engine in the settings drawer.');
+      } else {
+        setErrorMessage(err.message || 'Failed to connect to backend server. Please make sure the FastAPI server is running on port 8000.');
+      }
       setIsProcessing(false);
     }
   };
