@@ -68,7 +68,7 @@ async def analyze_call(
     # Check for response cache hit (Instant 0ms retrieval)
     cache_key = compute_cache_key(content, config_dict)
     cached_data = get_cached_report(cache_key)
-    if cached_data:
+    if cached_data and cached_data.get("transcript") and len(cached_data["transcript"]) > 0:
         print(f"[Cache Hit] Returning cached analysis for key: {cache_key}")
         cached_data["cached"] = True
         return AnalysisReport(**cached_data)
@@ -88,8 +88,9 @@ async def analyze_call(
             file_size_str=file_size_mb,
             config=parsed_config
         )
-        # Store successful result in cache
-        save_cached_report(cache_key, report.model_dump())
+        # Store successful result in cache ONLY if it produced a real transcript
+        if report.transcript and len(report.transcript) > 0:
+            save_cached_report(cache_key, report.model_dump())
         return report
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {str(e)}")

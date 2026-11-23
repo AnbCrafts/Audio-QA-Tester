@@ -199,7 +199,53 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
     Transcript:
     \"\"\"{transcript_text}\"\"\"
 
-    Format strictly as valid JSON adhering to the required schema with tone, actionItems, and transcript segments.
+    Format strictly as valid JSON adhering to the required schema:
+    {{
+      "duration": "01:45",
+      "tone": {{
+        "rating": "GREEN" or "RED",
+        "headline": "Short descriptive summary",
+        "explanation": "Detailed rationale",
+        "confidenceScore": 90,
+        "sentimentBreakdown": {{
+          "repProfessionalism": 85,
+          "repEmpathy": 80,
+          "repPatience": 85,
+          "customerFrustration": 25
+        }},
+        "evidenceQuotes": [
+          {{
+            "quote": "verbatim quote",
+            "speaker": "Sales Rep",
+            "explanation": "why this quote matters",
+            "timestamp": "00:15"
+          }}
+        ]
+      }},
+      "actionItems": [
+        {{
+          "id": "act-1",
+          "task": "commitment description",
+          "owner": "Sales Rep" or "Customer",
+          "deadline": "spoken deadline or null",
+          "evidenceQuote": "exact quote",
+          "timestamp": "00:10",
+          "seconds": 10,
+          "confidence": 90
+        }}
+      ],
+      "transcript": [
+        {{
+          "id": "t-1",
+          "speaker": "Sales Rep" or "Customer",
+          "isRep": true or false,
+          "timestamp": "00:00",
+          "seconds": 0,
+          "text": "spoken turn text",
+          "isFlaggedEvidence": false
+        }}
+      ]
+    }}
     """
 
     candidate_llms = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
@@ -237,7 +283,13 @@ def _build_report_from_json(data: dict, filename: str, file_size_str: str, confi
     )
 
     evidence_quotes = []
-    for eq in tone_raw.get("evidenceQuotes", []):
+    raw_quotes = (
+        tone_raw.get("evidenceQuotes")
+        or tone_raw.get("evidence_quotes")
+        or tone_raw.get("quotes")
+        or []
+    )
+    for eq in raw_quotes:
         if isinstance(eq, dict) and eq.get("quote"):
             evidence_quotes.append(EvidenceQuote(
                 quote=str(eq.get("quote", "")).strip(),
@@ -256,7 +308,13 @@ def _build_report_from_json(data: dict, filename: str, file_size_str: str, confi
     )
 
     action_items = []
-    for idx, item in enumerate(data.get("actionItems", [])):
+    raw_items = (
+        data.get("actionItems")
+        or data.get("action_items")
+        or data.get("commitments")
+        or []
+    )
+    for idx, item in enumerate(raw_items):
         if not isinstance(item, dict) or not item.get("task"):
             continue
         raw_dl = item.get("deadline")
@@ -278,7 +336,14 @@ def _build_report_from_json(data: dict, filename: str, file_size_str: str, confi
         ))
 
     transcript_segments = []
-    for idx, seg in enumerate(data.get("transcript", [])):
+    raw_segments = (
+        data.get("transcript")
+        or data.get("transcriptSegments")
+        or data.get("segments")
+        or data.get("dialogue")
+        or []
+    )
+    for idx, seg in enumerate(raw_segments):
         if not isinstance(seg, dict):
             continue
         speaker_str = str(seg.get("speaker", "Speaker")).strip()
