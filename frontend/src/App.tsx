@@ -8,6 +8,7 @@ import { AudioPlayerBar } from './components/AudioPlayerBar';
 import { ConfigDrawer } from './components/ConfigDrawer';
 import { BUSINESS_PRESETS } from './data/presets';
 import { AnalysisConfig, AnalysisReport } from './types';
+import { API_BASE_URL } from './config';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -43,7 +44,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const checkBackend = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/api/health');
+        const res = await fetch(`${API_BASE_URL}/api/health`);
         if (res.ok) {
           const data = await res.json();
           if (data.status === 'healthy') {
@@ -90,7 +91,7 @@ export const App: React.FC = () => {
         setProcessingStep('Extracting evidence-backed commitments & action items...');
       }, 14000);
 
-      const resp = await fetch('http://127.0.0.1:8000/api/analyze', {
+      const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: 'POST',
         body: formData,
         signal: controller.signal,
