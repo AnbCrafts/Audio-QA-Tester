@@ -22,15 +22,18 @@ def analyze_call_with_ai(file_path: str, filename: str, file_size_str: str, conf
     Dual-engine audio analysis pipeline:
     1. Attempts Gemini (multimodal native audio processing & diarization)
     2. Falls back to Groq if Gemini hits rate limits or is unconfigured
-    3. Graceful fallback with grounded template if neither key is set
+    3. Raises clear error if both fail (No static/fake data)
     """
     system_prompt = build_system_prompt(config)
+    gemini_error = None
+    groq_error = None
 
     # 1. Try Gemini
     if GEMINI_KEY:
         try:
             return _call_gemini(file_path, filename, file_size_str, config, system_prompt)
         except Exception as e:
+            gemini_error = str(e)
             print(f"[Warning] Gemini call failed: {e}. Attempting Groq fallback...")
 
     # 2. Try Groq fallback
@@ -38,10 +41,21 @@ def analyze_call_with_ai(file_path: str, filename: str, file_size_str: str, conf
         try:
             return _call_groq(file_path, filename, file_size_str, config, system_prompt)
         except Exception as e:
-            print(f"[Warning] Groq call failed: {e}. Falling back to grounded evaluation...")
+            groq_error = str(e)
+            print(f"[Warning] Groq call failed: {e}.")
 
-    # 3. Deterministic Local Evaluation Fallback (ensures 100% uptime for demo/evaluation)
-    return _generate_grounded_fallback(filename, file_size_str, config)
+    # If neither succeeded, raise clear real error (no fake data)
+    err_msg = "AI Analysis failed to process audio recording."
+    if gemini_error and groq_error:
+        err_msg = f"Both engines failed. Gemini: {gemini_error[:120]} | Groq: {groq_error[:120]}"
+    elif gemini_error:
+        err_msg = f"Gemini engine error: {gemini_error[:180]}"
+    elif groq_error:
+        err_msg = f"Groq engine error: {groq_error[:180]}"
+    elif not GEMINI_KEY and not GROQ_KEY:
+        err_msg = "No API keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY in backend/.env"
+
+    raise RuntimeError(err_msg)
 
 def _call_gemini(file_path: str, filename: str, file_size_str: str, config: AnalysisConfigInput, system_prompt: str) -> AnalysisReport:
     from google import genai
@@ -192,99 +206,5 @@ def _build_report_from_json(data: dict, filename: str, file_size_str: str, confi
         tone=ToneAnalysisResult(**data["tone"]),
         actionItems=[ActionItem(**item) for item in data.get("actionItems", [])],
         transcript=[TranscriptSegment(**seg) for seg in data.get("transcript", [])],
-        configUsed=config,
-    )
-
-def _generate_grounded_fallback(filename: str, file_size_str: str, config: AnalysisConfigInput) -> AnalysisReport:
-    """Provides a reliable test output when running without live API keys."""
-    is_red = "red" in filename.lower() or "hostile" in filename.lower()
-    
-    if is_red:
-        tone = ToneAnalysisResult(
-            rating="RED",
-            headline="Tone Violation: Sarcasm and Dismissiveness Under Objection",
-            explanation="The sales representative repeatedly interrupted the customer, dismissed valid feature concerns, and delivered an aggressive take-it-or-leave-it ultimatum.",
-            confidenceScore=96,
-            sentimentBreakdown=SentimentBreakdown(
-                repProfessionalism=25,
-                repEmpathy=18,
-                repPatience=20,
-                customerFrustration=85
-            ),
-            evidenceQuotes=[
-                EvidenceQuote(
-                    quote="If your engineering team can't read basic webhook docs, no vendor can help you.",
-                    speaker="Sales Rep",
-                    explanation="Direct insult questioning customer technical competence.",
-                    timestamp="01:18"
-                )
-            ]
-        )
-        actions = [
-            ActionItem(
-                id="act-red-1",
-                task="Send link to API documentation",
-                owner="Sales Rep",
-                deadline="End of day",
-                evidenceQuote="I will paste the doc link in an email by the end of the day.",
-                confidence=94
-            )
-        ]
-    else:
-        tone = ToneAnalysisResult(
-            rating="GREEN",
-            headline="Compliant Professionalism & Consultative Composure",
-            explanation=f"Representative exhibited consultative patience aligned with the {config.presetName} rubric. Validated customer budget constraints and proposed a realistic phased adoption.",
-            confidenceScore=94,
-            sentimentBreakdown=SentimentBreakdown(
-                repProfessionalism=95,
-                repEmpathy=91,
-                repPatience=93,
-                customerFrustration=40
-            ),
-            evidenceQuotes=[
-                EvidenceQuote(
-                    quote="I completely hear you regarding Q3 budget freezes, David. Let's not force an enterprise tier right away.",
-                    speaker="Sales Rep",
-                    explanation="Empathetic objection handling without defensive pressure.",
-                    timestamp="01:42"
-                )
-            ]
-        )
-        actions = [
-            ActionItem(
-                id="act-green-1",
-                task="Send itemized tier-one pricing proposal with phased rollout breakdown",
-                owner="Sales Rep",
-                deadline="Tomorrow by 3:00 PM EST",
-                evidenceQuote="I will prepare an itemized breakdown with tier-one pricing by tomorrow 3 PM.",
-                confidence=98
-            ),
-            ActionItem(
-                id="act-green-2",
-                task="Review pricing proposal with VP of Operations",
-                owner="Customer",
-                deadline="Thursday morning",
-                evidenceQuote="Once you send that over, I will run through the numbers with Sarah on Thursday morning.",
-                confidence=92
-            )
-        ]
-
-    transcript = [
-        TranscriptSegment(id="t-1", speaker="Sales Rep", isRep=True, timestamp="00:04", seconds=4, text="Good morning David! Thanks for taking the time to connect today."),
-        TranscriptSegment(id="t-2", speaker="Customer", isRep=False, timestamp="00:11", seconds=11, text="Morning. Pretty hectic day with board reviews upcoming."),
-        TranscriptSegment(id="t-3", speaker="Sales Rep", isRep=True, timestamp="01:42", seconds=102, isFlaggedEvidence=True, text="I completely hear you regarding Q3 budget freezes, David. Let's not force an enterprise tier right away."),
-    ]
-
-    return AnalysisReport(
-        callId=f"call_{int(time.time())}",
-        fileName=filename,
-        fileSize=file_size_str,
-        duration="03:45",
-        uploadedAt="Just now",
-        status="completed",
-        tone=tone,
-        actionItems=actions,
-        transcript=transcript,
         configUsed=config,
     )

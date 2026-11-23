@@ -1,20 +1,16 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileAudio, CheckCircle2, AlertCircle, Sparkles, Loader2, Play } from 'lucide-react';
+import { UploadCloud, FileAudio, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 interface UploadDropzoneProps {
   onFileUpload: (file: File) => void;
   isProcessing: boolean;
   processingStep: string;
-  onLoadGreenDemo: () => void;
-  onLoadRedDemo: () => void;
 }
 
 export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   onFileUpload,
   isProcessing,
   processingStep,
-  onLoadGreenDemo,
-  onLoadRedDemo,
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -64,36 +60,19 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   };
 
   return (
-    <div className="w-full rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm">
-      <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-4">
+    <div className="w-full rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm shadow-xl">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 mb-4">
         <div>
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             <FileAudio className="h-5 w-5 text-amber-400" />
             Upload Sales Call Recording
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Evaluates sales representative tone, diarizes speakers, and extracts commitments without hallucinations.
+            Accepts <span className="text-amber-400 font-semibold font-mono">.m4a</span> recordings to evaluate representative tone, diarize speakers, and extract commitments.
           </p>
         </div>
-
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-400">Assignment Test Audio:</span>
-          <button
-            type="button"
-            onClick={onLoadGreenDemo}
-            className="flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-1.5 font-semibold text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-all cursor-pointer"
-          >
-            <Play className="h-3 w-3" />
-            Load GREEN Call (.m4a)
-          </button>
-          <button
-            type="button"
-            onClick={onLoadRedDemo}
-            className="flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-1.5 font-semibold text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 transition-all cursor-pointer"
-          >
-            <Play className="h-3 w-3" />
-            Load RED Call (.m4a)
-          </button>
+        <div className="text-[11px] text-slate-500 font-mono">
+          Container: .m4a • Max Size: 25MB
         </div>
       </div>
 
@@ -103,7 +82,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => !isProcessing && fileInputRef.current?.click()}
-        className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 text-center transition-all cursor-pointer ${
+        className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-10 text-center transition-all cursor-pointer ${
           isDragOver
             ? 'border-amber-400 bg-amber-500/10 scale-[1.005]'
             : 'border-slate-700 bg-slate-950/40 hover:border-slate-600 hover:bg-slate-950/70'
@@ -119,34 +98,34 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
         />
 
         {isProcessing ? (
-          <div className="flex flex-col items-center py-4">
-            <Loader2 className="h-10 w-10 text-amber-400 animate-spin mb-3" />
-            <h3 className="text-sm font-bold text-white mb-1">
-              Analyzing Recording with Dual-Engine Verification
+          <div className="flex flex-col items-center py-6">
+            <Loader2 className="h-12 w-12 text-amber-400 animate-spin mb-4" />
+            <h3 className="text-base font-bold text-white mb-1.5">
+              Analyzing Recording with Dual AI Engines
             </h3>
-            <p className="text-xs text-amber-400/90 font-mono animate-pulse">
+            <p className="text-xs text-amber-400 font-mono animate-pulse max-w-md">
               {processingStep || 'Transcribing call with speaker diarization...'}
             </p>
-            <div className="mt-4 flex items-center gap-4 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1">
+            <div className="mt-5 flex items-center gap-4 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Grounded Evidence Citations
               </span>
-              <span className="flex items-center gap-1">
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Isolated Rep Judgment
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Isolated Rep Tone Check
               </span>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 mb-3 border border-amber-500/20 group-hover:scale-110 transition-transform">
-              <UploadCloud className="h-7 w-7" />
+          <div className="flex flex-col items-center py-4">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400 mb-3.5 border border-amber-500/20 group-hover:scale-110 transition-transform">
+              <UploadCloud className="h-8 w-8" />
             </div>
-            <p className="text-sm font-semibold text-slate-200">
-              Drop your <span className="text-amber-400 font-mono font-bold">.m4a</span> audio file here, or{' '}
-              <span className="text-amber-400 underline underline-offset-2">browse files</span>
+            <p className="text-base font-bold text-slate-200">
+              Drop your <span className="text-amber-400 font-mono">.m4a</span> audio recording here, or{' '}
+              <span className="text-amber-400 underline underline-offset-4">browse files</span>
             </p>
-            <p className="text-xs text-slate-500 mt-1">
-              Supported format: <strong className="text-slate-400">.m4a</strong> (AAC/ALAC audio) • Max file size: 25MB
+            <p className="text-xs text-slate-500 mt-1.5">
+              Supports English, Hindi, and Hinglish dialogue • Auto speaker diarization
             </p>
           </div>
         )}

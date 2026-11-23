@@ -1,20 +1,16 @@
 import React from 'react';
-import { Sliders, Activity, Sparkles, CheckCircle2, AlertOctagon, HelpCircle } from 'lucide-react';
+import { Sliders, Sparkles, Activity } from 'lucide-react';
 import { BusinessPreset } from '../types';
 
 interface NavbarProps {
   activePreset: BusinessPreset;
   onOpenConfig: () => void;
-  onLoadGreenDemo: () => void;
-  onLoadRedDemo: () => void;
   isBackendConnected: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   activePreset,
   onOpenConfig,
-  onLoadGreenDemo,
-  onLoadRedDemo,
   isBackendConnected,
 }) => {
   return (
@@ -38,32 +34,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Center / Fast Demo Switchers */}
-        <div className="hidden md:flex items-center gap-2 rounded-xl bg-slate-900/90 p-1 border border-slate-800">
-          <span className="px-2 text-xs font-medium text-slate-400">Quick Test Cases:</span>
-          <button
-            onClick={onLoadGreenDemo}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 transition-colors border border-emerald-500/20"
-            title="Load synthetic GREEN representative test call"
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Test Call (GREEN)
-          </button>
-          <button
-            onClick={onLoadRedDemo}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-rose-400 hover:bg-rose-500/10 transition-colors border border-rose-500/20"
-            title="Load synthetic RED representative test call"
-          >
-            <AlertOctagon className="h-3.5 w-3.5" />
-            Test Call (RED)
-          </button>
-        </div>
-
         {/* Action Controls */}
         <div className="flex items-center gap-3">
           {/* Backend Connection Status Badge */}
           <div
-            className={`hidden lg:flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold border ${
               isBackendConnected
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                 : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
@@ -74,7 +49,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 isBackendConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
               }`}
             />
-            <span>{isBackendConnected ? 'Dual Engine Connected' : 'Local Demo Mode'}</span>
+            <span>{isBackendConnected ? 'AI Engine Ready' : 'Connecting to Backend...'}</span>
           </div>
 
           {/* Active Preset Tag */}
