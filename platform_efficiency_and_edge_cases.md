@@ -97,10 +97,10 @@ To maintain high code quality and avoid convoluted, unreadable AI-generated code
 
 ## 5. Step-by-Step Implementation Roadmap
 
-- [ ] **Step 1: Code Standardization & Simplification**
+- [x] **Step 1: Code Standardization & Simplification**
   * Refactor existing frontend components into standard, clean `rafce` functional patterns with readable handlers.
   * Standardize API client calls using clean environment-configured URLs.
-- [ ] **Step 2: Resource Cleanup & Memory Safety**
+- [x] **Step 2: Resource Cleanup & Memory Safety**
   * Add automatic Gemini cloud file deletion (`client.files.delete()`).
   * Add `URL.revokeObjectURL()` cleanup in React to prevent browser memory leaks.
 - [ ] **Step 3: Response Caching & Performance**

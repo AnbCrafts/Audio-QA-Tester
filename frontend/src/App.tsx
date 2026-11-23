@@ -104,6 +104,10 @@ export const App: React.FC = () => {
 
       if (resp.ok) {
         const data = await resp.json();
+        // Memory safety: free previous audio object URL before allocating a new one
+        if (currentReport?.audioUrl) {
+          URL.revokeObjectURL(currentReport.audioUrl);
+        }
         setCurrentReport({
           ...data,
           audioUrl: URL.createObjectURL(file),
@@ -154,10 +158,23 @@ export const App: React.FC = () => {
   };
 
   const handleReset = () => {
+    // Memory safety: free audio object URL on reset
+    if (currentReport?.audioUrl) {
+      URL.revokeObjectURL(currentReport.audioUrl);
+    }
     setCurrentReport(null);
     setErrorMessage(null);
     setSeekTime(null);
   };
+
+  // Memory safety: free audio object URL when unmounting
+  useEffect(() => {
+    return () => {
+      if (currentReport?.audioUrl) {
+        URL.revokeObjectURL(currentReport.audioUrl);
+      }
+    };
+  }, [currentReport?.audioUrl]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">

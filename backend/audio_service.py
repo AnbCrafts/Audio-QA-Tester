@@ -66,14 +66,15 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
     # Upload audio file to Gemini File API
     uploaded_audio = client.files.upload(file=file_path)
 
-    # Wait for file to become active
-    for _ in range(15):
-        f_info = client.files.get(name=uploaded_audio.name)
-        if f_info.state and f_info.state.name == "ACTIVE":
-            break
-        time.sleep(1)
+    try:
+        # Wait for file to become active
+        for _ in range(15):
+            f_info = client.files.get(name=uploaded_audio.name)
+            if f_info.state and f_info.state.name == "ACTIVE":
+                break
+            time.sleep(1)
 
-    user_prompt = f"""
+        user_prompt = f"""
     Please listen to the attached audio call recording ({filename}).
     
     CRITICAL TRANSCRIPTION REQUIREMENTS:
@@ -144,28 +145,35 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
     }}
     """
 
-    # Model priority list (use current production models)
-    candidate_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
-    last_err = None
+        # Model priority list (use current production models)
+        candidate_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
+        last_err = None
 
-    for model_name in candidate_models:
+        for model_name in candidate_models:
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[uploaded_audio, user_prompt],
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                    ),
+                )
+                data = json.loads(response.text)
+                return _build_report_from_json(data, filename, file_size_str, config)
+            except Exception as e:
+                print(f"[Info] Gemini model {model_name} failed: {e}. Trying next...")
+                last_err = e
+
+        raise last_err or RuntimeError("All Gemini models failed")
+    finally:
+        # Resource cleanup: guarantee deletion of the uploaded cloud audio file
         try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=[uploaded_audio, user_prompt],
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    response_mime_type="application/json",
-                    temperature=0.2,
-                ),
-            )
-            data = json.loads(response.text)
-            return _build_report_from_json(data, filename, file_size_str, config)
-        except Exception as e:
-            print(f"[Info] Gemini model {model_name} failed: {e}. Trying next...")
-            last_err = e
-
-    raise last_err or RuntimeError("All Gemini models failed")
+            client.files.delete(name=uploaded_audio.name)
+            print(f"[Cleanup] Deleted temporary Gemini cloud file: {uploaded_audio.name}")
+        except Exception as cleanup_err:
+            print(f"[Warning] Gemini cloud file cleanup failed: {cleanup_err}")
 
 def _call_groq(file_path: str, filename: str, file_size_str: str, config: AnalysisConfigInput, system_prompt: str) -> AnalysisReport:
     from groq import Groq
