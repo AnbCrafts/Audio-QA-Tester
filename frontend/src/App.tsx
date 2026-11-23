@@ -18,6 +18,7 @@ import {
   Sparkles,
   RotateCcw,
   Headphones,
+  Zap,
 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -274,6 +275,15 @@ export const App: React.FC = () => {
                 <span>Analysis for: <strong className="text-white">{currentReport.fileName}</strong></span>
                 <span>•</span>
                 <span>Uploaded {currentReport.uploadedAt}</span>
+                {currentReport.cached && (
+                  <>
+                    <span>•</span>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300 border border-amber-500/20">
+                      <Zap className="h-3 w-3 text-amber-400" />
+                      Cached Analysis (0s)
+                    </span>
+                  </>
+                )}
               </div>
               <button
                 onClick={handleReset}

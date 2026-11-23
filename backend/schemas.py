@@ -67,4 +67,5 @@ class AnalysisReport(BaseModel):
     actionItems: List[ActionItem]
     transcript: List[TranscriptSegment]
     configUsed: AnalysisConfigInput
+    cached: Optional[bool] = False
     errorMessage: Optional[str] = None

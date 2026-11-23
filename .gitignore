@@ -43,6 +43,8 @@ yarn-error.log*
 pnpm-debug.log*
 
 # Audio cache & uploads
+cache/
+backend/cache/
 uploads/
 backend/uploads/
 temp/

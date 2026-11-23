@@ -103,8 +103,8 @@ To maintain high code quality and avoid convoluted, unreadable AI-generated code
 - [x] **Step 2: Resource Cleanup & Memory Safety**
   * Add automatic Gemini cloud file deletion (`client.files.delete()`).
   * Add `URL.revokeObjectURL()` cleanup in React to prevent browser memory leaks.
-- [ ] **Step 3: Response Caching & Performance**
-  * Implement audio file hash caching (MD5) to avoid redundant API billing and provide instant responses for re-uploaded calls.
+- [x] **Step 3: Response Caching & Performance**
+  * Implement audio file hash caching (SHA-256) to avoid redundant API billing and provide instant responses for re-uploaded calls.
 - [ ] **Step 4: Edge Case Robustness**
   * Refine prompts to reject conditional commitments.
   * Implement silence/hold music mitigation rules.

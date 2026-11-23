@@ -11,6 +11,7 @@ load_dotenv()
 
 from schemas import AnalysisConfigInput, AnalysisReport
 from audio_service import analyze_call_with_ai
+from cache_service import compute_cache_key, get_cached_report, save_cached_report
 
 app = FastAPI(
     title="ScaleWorks AI - Sales Call Quality Analysis Agent",
@@ -59,13 +60,23 @@ async def analyze_call(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid configuration parameters: {e}")
 
-    # Save uploaded file temporarily for AI processing
+    # Read uploaded file content into memory for caching and temporary persistence
+    content = await file.read()
+    file_size_mb = f"{len(content) / (1024 * 1024):.2f} MB"
+
+    # Check for response cache hit (Instant 0ms retrieval)
+    cache_key = compute_cache_key(content, config_dict)
+    cached_data = get_cached_report(cache_key)
+    if cached_data:
+        print(f"[Cache Hit] Returning cached analysis for key: {cache_key}")
+        cached_data["cached"] = True
+        return AnalysisReport(**cached_data)
+
+    # Cache miss: Save uploaded file temporarily for AI processing
     suffix = os.path.splitext(filename)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
         tmp_path = tmp_file.name
-        content = await file.read()
         tmp_file.write(content)
-        file_size_mb = f"{len(content) / (1024 * 1024):.2f} MB"
 
     try:
         # Run AI Analysis Pipeline
@@ -75,6 +86,8 @@ async def analyze_call(
             file_size_str=file_size_mb,
             config=parsed_config
         )
+        # Store successful result in cache
+        save_cached_report(cache_key, report.model_dump())
         return report
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {str(e)}")
