@@ -2,7 +2,15 @@ import os
 import json
 import time
 from typing import Tuple
-from schemas import AnalysisConfigInput, AnalysisReport, ToneAnalysisResult, ActionItem, TranscriptSegment, EvidenceQuote, SentimentBreakdown
+from schemas import (
+    AnalysisConfigInput,
+    AnalysisReport,
+    ToneAnalysisResult,
+    ActionItem,
+    TranscriptSegment,
+    EvidenceQuote,
+    SentimentBreakdown,
+)
 from prompts import build_system_prompt
 
 # Check available API keys
@@ -44,43 +52,54 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
     # Upload audio file to Gemini File API
     uploaded_audio = client.files.upload(file=file_path)
 
-    # Prompt request
+    # Wait for file to become active
+    for _ in range(15):
+        f_info = client.files.get(name=uploaded_audio.name)
+        if f_info.state and f_info.state.name == "ACTIVE":
+            break
+        time.sleep(1)
+
     user_prompt = f"""
     Please listen to the attached audio call recording ({filename}).
-    1. Transcribe the conversation, distinguishing between the Sales Representative and the Customer with timestamps.
+    IMPORTANT MULTILINGUAL INSTRUCTION:
+    The conversation may be in Hindi, Hinglish (mixed Hindi-English), English, or another regional language.
+    1. Transcribe the conversation accurately turn by turn, distinguishing between the Sales Representative and the Customer with timestamps.
+       Keep the dialogue text in the spoken language (Hindi / Hinglish / English).
     2. Evaluate the Sales Representative's tone based on the configured criteria (RED if violation, GREEN if compliant).
-    3. Extract concrete commitments and action items without inventing deadlines.
-    
+       Base the judgment SOLELY on the representative, not the customer.
+    3. Extract concrete commitments and action items (do not invent deadlines or owners).
+
     Return the response as a single, valid JSON object matching the AnalysisReport schema:
     {{
+      "duration": "01:54",
       "tone": {{
         "rating": "GREEN" or "RED",
-        "headline": "Short title",
-        "explanation": "Detailed rationale",
-        "confidenceScore": 90,
+        "headline": "Short descriptive title of representative tone",
+        "explanation": "Detailed explanation of the representative's demeanor during the call",
+        "confidenceScore": 92,
         "sentimentBreakdown": {{
-          "repProfessionalism": 95,
-          "repEmpathy": 90,
-          "repPatience": 92,
-          "customerFrustration": 30
+          "repProfessionalism": 88,
+          "repEmpathy": 85,
+          "repPatience": 90,
+          "customerFrustration": 35
         }},
         "evidenceQuotes": [
           {{
-            "quote": "Exact transcript snippet",
+            "quote": "Exact transcript quote spoken during call",
             "speaker": "Sales Rep",
-            "explanation": "Why this supports the rating",
-            "timestamp": "01:23"
+            "explanation": "Why this quote justifies the rating",
+            "timestamp": "00:30"
           }}
         ]
       }},
       "actionItems": [
         {{
           "id": "act-1",
-          "task": "Concrete task description",
+          "task": "Concrete task commitment",
           "owner": "Sales Rep" or "Customer" or "Unspecified",
           "deadline": "Spoken deadline or null",
-          "evidenceQuote": "Spoken sentence",
-          "confidence": 95
+          "evidenceQuote": "Exact sentence from the call",
+          "confidence": 92
         }}
       ],
       "transcript": [
@@ -90,25 +109,35 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
           "isRep": true or false,
           "timestamp": "00:05",
           "seconds": 5,
-          "text": "Spoken text",
+          "text": "Actual dialogue spoken",
           "isFlaggedEvidence": false
         }}
       ]
     }}
     """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[uploaded_audio, user_prompt],
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            response_mime_type="application/json",
-            temperature=0.2,
-        ),
-    )
+    # Model priority list (use current production models)
+    candidate_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
+    last_err = None
 
-    data = json.loads(response.text)
-    return _build_report_from_json(data, filename, file_size_str, config)
+    for model_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[uploaded_audio, user_prompt],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    response_mime_type="application/json",
+                    temperature=0.2,
+                ),
+            )
+            data = json.loads(response.text)
+            return _build_report_from_json(data, filename, file_size_str, config)
+        except Exception as e:
+            print(f"[Info] Gemini model {model_name} failed: {e}. Trying next...")
+            last_err = e
+
+    raise last_err or RuntimeError("All Gemini models failed")
 
 def _call_groq(file_path: str, filename: str, file_size_str: str, config: AnalysisConfigInput, system_prompt: str) -> AnalysisReport:
     from groq import Groq
@@ -122,35 +151,42 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
             response_format="verbose_json",
         )
 
-    # 2. Reason over transcript with Llama-3.3-70b-versatile
+    # 2. Reason over transcript with Qwen 27B / GPT on Groq
     transcript_text = getattr(transcription, "text", str(transcription))
     prompt = f"""
-    Evaluate the following call transcript for representative tone and action items:
+    Evaluate the following call transcript for representative tone and action items.
+    Note: The transcript may contain Hindi or Hinglish dialogue.
     Transcript:
     \"\"\"{transcript_text}\"\"\"
 
-    Format strictly as valid JSON adhering to the required schema.
+    Format strictly as valid JSON adhering to the required schema with tone, actionItems, and transcript segments.
     """
 
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        model="llama-3.3-70b-versatile",
-        response_format={"type": "json_object"},
-        temperature=0.2,
-    )
+    candidate_llms = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    for llm in candidate_llms:
+        try:
+            chat_completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                model=llm,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            data = json.loads(chat_completion.choices[0].message.content)
+            return _build_report_from_json(data, filename, file_size_str, config)
+        except Exception as e:
+            print(f"[Info] Groq LLM {llm} failed: {e}. Trying next...")
 
-    data = json.loads(chat_completion.choices[0].message.content)
-    return _build_report_from_json(data, filename, file_size_str, config)
+    raise RuntimeError("All Groq models failed")
 
 def _build_report_from_json(data: dict, filename: str, file_size_str: str, config: AnalysisConfigInput) -> AnalysisReport:
     return AnalysisReport(
         callId=f"call_{int(time.time())}",
         fileName=filename,
         fileSize=file_size_str,
-        duration=data.get("duration", "03:45"),
+        duration=data.get("duration", "01:54"),
         uploadedAt="Just now",
         status="completed",
         tone=ToneAnalysisResult(**data["tone"]),

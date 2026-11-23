@@ -55,27 +55,42 @@ export const App: React.FC = () => {
 
   const handleFileUpload = async (file: File) => {
     setIsProcessing(true);
-    setProcessingStep('Validating .m4a audio container & payload...');
+    setProcessingStep('Sending audio to AI engine for transcription & speaker diarization...');
 
-    // Try connecting to backend if active, or simulate realistic multi-stage processing
     try {
       const formData = new FormData();
       formData.append('file', file);
       formData.append('config', JSON.stringify(config));
 
-      // Quick check if backend is up at http://localhost:8000
+      // Real AI analysis can take 10-30 seconds depending on audio length
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
 
-      const resp = await fetch('http://localhost:8000/api/analyze', {
+      // Update progress hints while processing
+      const step1Timer = setTimeout(() => {
+        setProcessingStep('Transcribing audio turns (multilingual Hindi/Hinglish/English)...');
+      }, 3000);
+
+      const step2Timer = setTimeout(() => {
+        setProcessingStep('Isolating Sales Rep dialogue & scoring tone against rubric...');
+      }, 8000);
+
+      const step3Timer = setTimeout(() => {
+        setProcessingStep('Extracting evidence-backed commitments & action items...');
+      }, 14000);
+
+      const resp = await fetch('http://127.0.0.1:8000/api/analyze', {
         method: 'POST',
         body: formData,
         signal: controller.signal,
-      }).catch(() => null);
+      });
 
       clearTimeout(timeoutId);
+      clearTimeout(step1Timer);
+      clearTimeout(step2Timer);
+      clearTimeout(step3Timer);
 
-      if (resp && resp.ok) {
+      if (resp.ok) {
         const data = await resp.json();
         setCurrentReport({
           ...data,
@@ -83,26 +98,14 @@ export const App: React.FC = () => {
         });
         setIsProcessing(false);
         return;
+      } else {
+        const errJson = await resp.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Server responded with status ${resp.status}`);
       }
-    } catch (e) {
-      // Backend not yet running, smoothly use client simulation
-    }
-
-    // High fidelity processing progression
-    setTimeout(() => {
-      setProcessingStep('Stage 1/3: Transcribing audio & diarizing speakers...');
-    }, 900);
-
-    setTimeout(() => {
-      setProcessingStep('Stage 2/3: Applying rubric & isolating Sales Rep tone...');
-    }, 2200);
-
-    setTimeout(() => {
-      setProcessingStep('Stage 3/3: Extracting commitments without hallucination...');
-    }, 3400);
-
-    setTimeout(() => {
-      // Create dynamically analyzed report for this uploaded file
+    } catch (err: any) {
+      console.error('Real AI Analysis error:', err);
+      alert(`AI Analysis note: ${err.message || 'Error communicating with backend.'}\nShowing fallback simulation.`);
+      
       const isRedTriggered = file.name.toLowerCase().includes('red') || file.name.toLowerCase().includes('hostile');
       const baseMock = isRedTriggered ? MOCK_RED_CALL : MOCK_GREEN_CALL;
 
@@ -115,9 +118,8 @@ export const App: React.FC = () => {
         uploadedAt: 'Just now',
         configUsed: config,
       });
-
       setIsProcessing(false);
-    }, 4500);
+    }
   };
 
   const handleJumpToTimestamp = (timestampStr: string) => {
