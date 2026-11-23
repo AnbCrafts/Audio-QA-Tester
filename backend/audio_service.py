@@ -75,15 +75,27 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
 
     user_prompt = f"""
     Please listen to the attached audio call recording ({filename}).
-    IMPORTANT MULTILINGUAL INSTRUCTION:
-    The conversation may be in Hindi, Hinglish (mixed Hindi-English), English, or another regional language.
-    1. Transcribe the conversation accurately turn by turn, distinguishing between the Sales Representative and the Customer with timestamps.
-       Keep the dialogue text in the spoken language (Hindi / Hinglish / English).
-    2. Evaluate the Sales Representative's tone based on the configured criteria (RED if violation, GREEN if compliant).
-       Base the judgment SOLELY on the representative, not the customer.
-    3. Extract concrete commitments and action items (do not invent deadlines or owners).
+    
+    CRITICAL TRANSCRIPTION REQUIREMENTS:
+    1. COMPLETE UNABRIDGED TRANSCRIPT: You MUST transcribe the entire audio conversation from 00:00 to the very end.
+       Do NOT summarize, skip, truncate, or omit any dialogue turns. Every single spoken utterance by either the
+       Sales Representative or Customer must appear as a separate turn in the 'transcript' array.
+    2. MULTILINGUAL ACCURACY: The call may be in Hindi, Hinglish (mixed Hindi-English), English, or regional dialect.
+       Preserve the actual spoken dialogue text faithfully (e.g. in Hindi/Hinglish).
+    3. ACCURATE TIMESTAMPS: Each transcript segment must include the exact start timestamp ("MM:SS") and integer seconds.
+    4. SPEAKER DIARIZATION: Correctly identify the speaker ("Sales Rep" vs "Customer") for each turn.
+       Set isFlaggedEvidence=true on any transcript segment where an action item was dictated or where key tone evidence occurred.
 
-    Return the response as a single, valid JSON object matching the AnalysisReport schema:
+    EVALUATION & COMMITMENT REQUIREMENTS:
+    1. TONE QUALITY EVALUATION: Evaluate ONLY the Sales Representative's demeanor against the configured rubric.
+       Mark RED if negative, rude, hostile, dismissive, or violating criteria; otherwise mark GREEN.
+       Support the rating with verbatim evidence quotes and exact timestamps.
+    2. GROUNDED ACTION ITEMS:
+       Extract all concrete commitments, requested goods/quantities, or next steps dictated during the call.
+       Include the exact 'timestamp' ("MM:SS") and 'seconds' where the commitment was stated in the call.
+       NEVER invent deadlines or owners. If no deadline was explicitly spoken, set deadline to null.
+
+    Return the complete analysis strictly formatted as a valid JSON object matching the AnalysisReport schema:
     {{
       "duration": "01:54",
       "tone": {{
@@ -109,10 +121,12 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
       "actionItems": [
         {{
           "id": "act-1",
-          "task": "Concrete task commitment",
+          "task": "Concrete commitment or item ordered",
           "owner": "Sales Rep" or "Customer" or "Unspecified",
           "deadline": "Spoken deadline or null",
-          "evidenceQuote": "Exact sentence from the call",
+          "evidenceQuote": "Exact sentence spoken in the call",
+          "timestamp": "00:05",
+          "seconds": 5,
           "confidence": 92
         }}
       ],
@@ -121,9 +135,9 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
           "id": "t-1",
           "speaker": "Sales Rep" or "Customer",
           "isRep": true or false,
-          "timestamp": "00:05",
-          "seconds": 5,
-          "text": "Actual dialogue spoken",
+          "timestamp": "00:00",
+          "seconds": 0,
+          "text": "Actual verbatim dialogue spoken",
           "isFlaggedEvidence": false
         }}
       ]

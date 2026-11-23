@@ -1,15 +1,15 @@
 import React from 'react';
-import { CheckSquare, Calendar, User, Quote, AlertCircle, Sparkles } from 'lucide-react';
+import { CheckSquare, Calendar, User, Quote, Clock, Play } from 'lucide-react';
 import { ActionItem } from '../types';
 
 interface ActionItemsListProps {
   actionItems: ActionItem[];
-  onJumpToQuote?: (quote: string) => void;
+  onSeekTimestamp?: (timestamp: string, seconds?: number | null) => void;
 }
 
 export const ActionItemsList: React.FC<ActionItemsListProps> = ({
   actionItems,
-  onJumpToQuote,
+  onSeekTimestamp,
 }) => {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm shadow-lg">
@@ -20,7 +20,7 @@ export const ActionItemsList: React.FC<ActionItemsListProps> = ({
             Extracted Commitments & Action Items
           </h3>
           <p className="text-xs text-slate-400 mt-0.5">
-            Strictly grounded in transcript commitments. No speculative owners or hallucinated deadlines.
+            Strictly grounded in transcript commitments with exact call timestamps.
           </p>
         </div>
         <span className="rounded-full bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-300 border border-slate-700">
@@ -45,6 +45,21 @@ export const ActionItemsList: React.FC<ActionItemsListProps> = ({
                 </span>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  {/* Timestamp seek button */}
+                  {item.timestamp && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSeekTimestamp && onSeekTimestamp(item.timestamp!, item.seconds)
+                      }
+                      className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] font-mono font-semibold text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 transition-colors cursor-pointer"
+                      title="Jump to audio when this commitment was dictated"
+                    >
+                      <Play className="h-2.5 w-2.5" />
+                      ⏱ {item.timestamp}
+                    </button>
+                  )}
+
                   {/* Owner Badge */}
                   <span
                     className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold border ${
@@ -68,16 +83,22 @@ export const ActionItemsList: React.FC<ActionItemsListProps> = ({
                     }`}
                   >
                     <Calendar className="h-3 w-3" />
-                    {item.deadline ? item.deadline : 'No Deadline Mentioned'}
+                    {item.deadline ? item.deadline : 'No Deadline'}
                   </span>
                 </div>
               </div>
 
               {/* Supporting Evidence Quote */}
-              <div className="mt-2 rounded-lg bg-slate-900/90 border border-slate-800/80 px-3 py-2 text-xs">
+              <div
+                onClick={() =>
+                  item.timestamp && onSeekTimestamp && onSeekTimestamp(item.timestamp, item.seconds)
+                }
+                className="mt-2 rounded-lg bg-slate-900/90 border border-slate-800/80 px-3 py-2 text-xs cursor-pointer hover:border-slate-700 transition-colors"
+                title="Click to jump audio to this quote"
+              >
                 <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1">
                   <Quote className="h-3 w-3 text-amber-400" />
-                  Evidence in Call:
+                  Spoken in Call:
                 </div>
                 <p className="text-slate-300 italic">
                   "{item.evidenceQuote}"

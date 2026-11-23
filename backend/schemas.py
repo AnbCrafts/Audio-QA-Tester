@@ -43,6 +43,8 @@ class ActionItem(BaseModel):
     owner: str  # "Sales Rep" | "Customer" | "Unspecified"
     deadline: Optional[str] = None
     evidenceQuote: str
+    timestamp: Optional[str] = None
+    seconds: Optional[int] = None
     confidence: int = Field(ge=0, le=100)
 
 class TranscriptSegment(BaseModel):

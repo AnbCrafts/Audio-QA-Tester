@@ -119,12 +119,37 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleJumpToTimestamp = (timestampStr: string) => {
+  const handleJumpToTimestamp = (timestampStr: string, explicitSeconds?: number | null) => {
+    if (explicitSeconds !== undefined && explicitSeconds !== null) {
+      setSeekTime(explicitSeconds);
+      return;
+    }
     const parts = timestampStr.split(':');
     if (parts.length === 2) {
       const seconds = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
       setSeekTime(seconds);
     }
+  };
+
+  const handleUpdateTranscriptSegment = (id: string, newText: string, newSpeaker: string) => {
+    if (!currentReport) return;
+    const isRep = newSpeaker === 'Sales Rep';
+    const updated = currentReport.transcript.map((seg) => {
+      if (seg.id === id) {
+        return {
+          ...seg,
+          text: newText,
+          speaker: newSpeaker,
+          isRep,
+        };
+      }
+      return seg;
+    });
+
+    setCurrentReport({
+      ...currentReport,
+      transcript: updated,
+    });
   };
 
   const handleReset = () => {
@@ -260,7 +285,10 @@ export const App: React.FC = () => {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               {/* Left Column: Action Items (5 cols) */}
               <div className="lg:col-span-5 space-y-6">
-                <ActionItemsList actionItems={currentReport.actionItems} />
+                <ActionItemsList
+                  actionItems={currentReport.actionItems}
+                  onSeekTimestamp={handleJumpToTimestamp}
+                />
 
                 {/* Assessment Scoring Overview Card */}
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 text-xs">
@@ -290,6 +318,7 @@ export const App: React.FC = () => {
                 <TranscriptViewer
                   transcript={currentReport.transcript}
                   onSeekAudio={(sec) => setSeekTime(sec)}
+                  onUpdateSegment={handleUpdateTranscriptSegment}
                 />
               </div>
             </div>

@@ -39,6 +39,8 @@ export interface ActionItem {
   owner: string; // "Sales Rep" | "Customer" | "Unspecified"
   deadline: string | null;
   evidenceQuote: string;
+  timestamp?: string | null;
+  seconds?: number | null;
   confidence: number;
 }
 
