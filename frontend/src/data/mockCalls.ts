@@ -1,0 +1,306 @@
+import { AnalysisReport } from '../types';
+
+export const MOCK_GREEN_CALL: AnalysisReport = {
+  callId: 'call_demo_green_101',
+  fileName: 'acme_saas_discovery_call_green.m4a',
+  fileSize: '4.8 MB',
+  duration: '04:12',
+  uploadedAt: 'Today at 10:45 AM',
+  status: 'completed',
+  configUsed: {
+    presetId: 'saas_sales',
+    presetName: 'B2B SaaS Sales',
+    sensitivity: 'balanced',
+    toneCriteria:
+      'Representative must maintain active listening, consultative empathy, and respect during pricing or technical objections.',
+    actionItemScope: 'explicit_commitments',
+    customForbiddenPhrases: ['deal with it', 'not my problem'],
+    repSpeakerId: 'auto',
+    aiProvider: 'gemini',
+  },
+  tone: {
+    rating: 'GREEN',
+    headline: 'Exemplary Professionalism & Active Listening Under Pressure',
+    explanation:
+      'The sales representative (Marcus) demonstrated exceptional composure and consultative patience when the client raised acute budget and timeline constraints. Rather than defending pricing defensively, Marcus validated the client’s concerns and proactively proposed a phased rollout.',
+    confidenceScore: 94,
+    sentimentBreakdown: {
+      repProfessionalism: 96,
+      repEmpathy: 91,
+      repPatience: 93,
+      customerFrustration: 45, // Notice customer was somewhat stressed, but rep stayed calm!
+    },
+    evidenceQuotes: [
+      {
+        speaker: 'Sales Rep',
+        quote:
+          'I completely hear you regarding Q3 budget freezes, David. Let’s not force an enterprise tier right away if the immediate need is just workflow automation.',
+        explanation: 'Empathetic reframing of objection without pressure or hostility.',
+        timestamp: '01:42',
+      },
+      {
+        speaker: 'Sales Rep',
+        quote:
+          'Take your time discussing this with Sarah. I will prepare an itemized breakdown with tier-one pricing by tomorrow 3 PM.',
+        explanation: 'Respectful spacing and setting a concrete, non-coercive timeline.',
+        timestamp: '03:15',
+      },
+    ],
+  },
+  actionItems: [
+    {
+      id: 'act-1',
+      task: 'Send itemized tier-one pricing proposal and phased rollout breakdown',
+      owner: 'Sales Rep',
+      deadline: 'Tomorrow by 3:00 PM EST',
+      evidenceQuote:
+        'I will prepare an itemized breakdown with tier-one pricing by tomorrow 3 PM.',
+      confidence: 98,
+    },
+    {
+      id: 'act-2',
+      task: 'Review itemized pricing proposal with VP of Operations (Sarah)',
+      owner: 'Customer',
+      deadline: 'Thursday morning',
+      evidenceQuote:
+        'Once you send that over, I will run through the numbers with Sarah on Thursday morning.',
+      confidence: 92,
+    },
+    {
+      id: 'act-3',
+      task: 'Schedule 15-minute sync to finalize technical security questionnaire',
+      owner: 'Sales Rep',
+      deadline: null, // Note: No explicit deadline fabricated!
+      evidenceQuote:
+        'I will also loop in our solutions architect so we can schedule a quick 15-minute security review next week.',
+      confidence: 89,
+    },
+  ],
+  transcript: [
+    {
+      id: 't-1',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '00:04',
+      seconds: 4,
+      text: 'Good morning David! Thanks for taking the time to connect today. How has your week been treating you?',
+    },
+    {
+      id: 't-2',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '00:11',
+      seconds: 11,
+      text: 'Morning Marcus. Honestly, pretty hectic. We have a board meeting on Friday and budget scrutiny is intense right now.',
+    },
+    {
+      id: 't-3',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '00:22',
+      seconds: 22,
+      text: 'I understand completely. Let us keep today focused on your immediate priorities so we make the best use of your 20 minutes.',
+    },
+    {
+      id: 't-4',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '01:28',
+      seconds: 88,
+      text: 'The solution looks great, but your standard plan is nearly $40k annually. In this economic climate, that is going to be dead on arrival with our CFO.',
+    },
+    {
+      id: 't-5',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '01:42',
+      seconds: 102,
+      isFlaggedEvidence: true,
+      text: 'I completely hear you regarding Q3 budget freezes, David. Let’s not force an enterprise tier right away if the immediate need is just workflow automation.',
+    },
+    {
+      id: 't-6',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '02:05',
+      seconds: 125,
+      text: 'That would help. What would a pilot or smaller tier look like for just the core ops team?',
+    },
+    {
+      id: 't-7',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '02:18',
+      seconds: 138,
+      text: 'We can isolate the pilot to 15 seats. It brings the initial commitment down under $12k with full migration support included.',
+    },
+    {
+      id: 't-8',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '03:02',
+      seconds: 182,
+      text: 'Okay, that might actually pass review. Can you put that in writing?',
+    },
+    {
+      id: 't-9',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '03:15',
+      seconds: 195,
+      isFlaggedEvidence: true,
+      text: 'Take your time discussing this with Sarah. I will prepare an itemized breakdown with tier-one pricing by tomorrow 3 PM.',
+    },
+    {
+      id: 't-10',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '03:32',
+      seconds: 212,
+      text: 'Once you send that over, I will run through the numbers with Sarah on Thursday morning.',
+    },
+    {
+      id: 't-11',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '03:45',
+      seconds: 225,
+      text: 'Sounds like a great plan. I will also loop in our solutions architect so we can schedule a quick 15-minute security review next week.',
+    },
+  ],
+};
+
+export const MOCK_RED_CALL: AnalysisReport = {
+  callId: 'call_demo_red_202',
+  fileName: 'client_inquiry_hostile_rep_red.m4a',
+  fileSize: '3.6 MB',
+  duration: '03:05',
+  uploadedAt: 'Today at 11:15 AM',
+  status: 'completed',
+  configUsed: {
+    presetId: 'saas_sales',
+    presetName: 'B2B SaaS Sales',
+    sensitivity: 'balanced',
+    toneCriteria:
+      'Representative must maintain active listening, consultative empathy, and respect during pricing or technical objections. Flag RED if rep is hostile, sarcastic, or dismissive.',
+    actionItemScope: 'explicit_commitments',
+    customForbiddenPhrases: ['if you don’t understand', 'obviously'],
+    repSpeakerId: 'auto',
+    aiProvider: 'gemini',
+  },
+  tone: {
+    rating: 'RED',
+    headline: 'Violations of Professionalism: Sarcastic, Dismissive & Condescending',
+    explanation:
+      'The sales representative (Derek) repeatedly interrupted the prospective client, exhibited condescension regarding the client’s technical knowledge, and delivered an ultimatum rather than addressing feature parity concerns.',
+    confidenceScore: 98,
+    sentimentBreakdown: {
+      repProfessionalism: 22,
+      repEmpathy: 15,
+      repPatience: 18,
+      customerFrustration: 88,
+    },
+    evidenceQuotes: [
+      {
+        speaker: 'Sales Rep',
+        quote:
+          'Look, if your engineering team can’t understand basic webhook documentation, I don’t think any vendor is going to solve your issues.',
+        explanation: 'Direct insult questioning the customer team’s technical competency.',
+        timestamp: '01:18',
+      },
+      {
+        speaker: 'Sales Rep',
+        quote:
+          'I’ve explained this three times already. We don’t discount for early-stage companies, so take it or leave it.',
+        explanation: 'Aggressive dismissiveness and hostile negotiation ultimatum.',
+        timestamp: '02:30',
+      },
+    ],
+  },
+  actionItems: [
+    {
+      id: 'act-red-1',
+      task: 'Send link to API documentation',
+      owner: 'Sales Rep',
+      deadline: 'End of day today',
+      evidenceQuote: 'I will paste the doc link in an email by the end of the day.',
+      confidence: 94,
+    },
+    {
+      id: 'act-red-2',
+      task: 'Escalate call feedback to sales enablement manager for compliance coaching',
+      owner: 'Sales Manager',
+      deadline: null,
+      evidenceQuote: '[System Note: Flagged due to hostile interaction severity]',
+      confidence: 99,
+    },
+  ],
+  transcript: [
+    {
+      id: 'tr-1',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '00:03',
+      seconds: 3,
+      text: 'Yeah hi Kevin, what questions did you have? I only have about ten minutes before my next demo.',
+    },
+    {
+      id: 'tr-2',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '00:14',
+      seconds: 14,
+      text: 'Hi Derek. We were testing the webhook ingestion over the weekend and ran into rate-limiting errors. We wanted to clarify if custom rate limits are possible.',
+    },
+    {
+      id: 'tr-3',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '00:32',
+      seconds: 32,
+      text: 'It is written in our documentation. The rate limits are standard across all tiers.',
+    },
+    {
+      id: 'tr-4',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '00:49',
+      seconds: 49,
+      text: 'Right, but the docs mention enterprise tiers have configurable burst capacity, which is why we wanted to double-check.',
+    },
+    {
+      id: 'tr-5',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '01:18',
+      seconds: 78,
+      isFlaggedEvidence: true,
+      text: 'Look, if your engineering team can’t understand basic webhook documentation, I don’t think any vendor is going to solve your issues.',
+    },
+    {
+      id: 'tr-6',
+      speaker: 'Customer',
+      isRep: false,
+      timestamp: '01:45',
+      seconds: 105,
+      text: 'Excuse me? There is no need for that tone. We are evaluating whether to spend $50,000 with your company.',
+    },
+    {
+      id: 'tr-7',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '02:30',
+      seconds: 150,
+      isFlaggedEvidence: true,
+      text: 'I’ve explained this three times already. We don’t discount for early-stage companies, so take it or leave it.',
+    },
+    {
+      id: 'tr-8',
+      speaker: 'Sales Rep',
+      isRep: true,
+      timestamp: '02:45',
+      seconds: 165,
+      text: 'I will paste the doc link in an email by the end of the day. Goodbye.',
+    },
+  ],
+};
