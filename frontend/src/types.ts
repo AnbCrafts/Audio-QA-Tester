@@ -77,6 +77,7 @@ export interface AnalysisReport {
   transcript: TranscriptSegment[];
   configUsed: AnalysisConfig;
   cached?: boolean;
+  engineUsed?: string;
   status: 'processing' | 'completed' | 'error';
   errorMessage?: string;
 }

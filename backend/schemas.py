@@ -68,4 +68,5 @@ class AnalysisReport(BaseModel):
     transcript: List[TranscriptSegment]
     configUsed: AnalysisConfigInput
     cached: Optional[bool] = False
+    engineUsed: Optional[str] = "Gemini 3.5 Flash"
     errorMessage: Optional[str] = None

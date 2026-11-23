@@ -149,26 +149,34 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
     }}
     """
 
-        # Model priority list (use current production models)
-        candidate_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
+        # Model priority list (use verified current production models)
+        candidate_models = ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
         last_err = None
 
         for model_name in candidate_models:
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[uploaded_audio, user_prompt],
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        response_mime_type="application/json",
-                        temperature=0.2,
-                    ),
-                )
-                data = json.loads(response.text)
-                return _build_report_from_json(data, filename, file_size_str, config)
-            except Exception as e:
-                print(f"[Info] Gemini model {model_name} failed: {e}. Trying next...")
-                last_err = e
+            # Retry up to 2 times per model if encountering temporary 503 load spikes
+            for attempt in range(2):
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[uploaded_audio, user_prompt],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            response_mime_type="application/json",
+                            temperature=0.2,
+                        ),
+                    )
+                    data = json.loads(response.text)
+                    return _build_report_from_json(data, filename, file_size_str, config, engine_name=f"Gemini ({model_name})")
+                except Exception as e:
+                    err_str = str(e)
+                    print(f"[Info] Gemini model {model_name} attempt {attempt+1} failed: {e}")
+                    last_err = e
+                    if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str:
+                        time.sleep(2)
+                        continue
+                    else:
+                        break
 
         raise last_err or RuntimeError("All Gemini models failed")
     finally:
@@ -183,21 +191,28 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
     from groq import Groq
     client = Groq(api_key=GROQ_KEY)
 
-    # 1. Transcribe audio with Whisper on Groq
+    # 1. Transcribe audio with Whisper on Groq with Hindi/Hinglish context prompt
     with open(file_path, "rb") as file:
         transcription = client.audio.transcriptions.create(
             file=(filename, file.read()),
             model="whisper-large-v3-turbo",
             response_format="verbose_json",
+            prompt="Sales call order in Hindi, Hinglish, and English. Boliye, khajoor, bada dana, chota dana, packet, haan, theek hai, bhaiya, kitna hua.",
         )
 
     # 2. Reason over transcript with Qwen 27B / GPT on Groq
     transcript_text = getattr(transcription, "text", str(transcription))
     prompt = f"""
     Evaluate the following call transcript for representative tone and action items.
-    Note: The transcript may contain Hindi or Hinglish dialogue.
+    Note: The transcript may contain Hindi or Hinglish dialogue. Preserve Hindi/Hinglish phrasing accurately.
+    
     Transcript:
     \"\"\"{transcript_text}\"\"\"
+
+    MANDATORY TRANSCRIPTION & DIARIZATION RULES:
+    1. BREAK INTO CONVERSATIONAL TURNS: You MUST segment the above conversation into turn-by-turn dialogue between "Sales Rep" and "Customer" in the 'transcript' array with sequential timestamps ("00:00", "00:04", "00:10", etc.). Do NOT output the entire transcript as one single turn!
+    2. SCORE TONE & SENTIMENT: Evaluate ONLY the Sales Representative. Calculate real numeric scores (0-100) for repProfessionalism, repEmpathy, repPatience, and customerFrustration.
+    3. COMMITMENTS: Extract any items ordered or commitments made with speaker attribution.
 
     Format strictly as valid JSON adhering to the required schema:
     {{
@@ -208,10 +223,10 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
         "explanation": "Detailed rationale",
         "confidenceScore": 90,
         "sentimentBreakdown": {{
-          "repProfessionalism": 85,
-          "repEmpathy": 80,
-          "repPatience": 85,
-          "customerFrustration": 25
+          "repProfessionalism": 88,
+          "repEmpathy": 84,
+          "repPatience": 91,
+          "customerFrustration": 20
         }},
         "evidenceQuotes": [
           {{
@@ -261,25 +276,45 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
                 temperature=0.2,
             )
             data = json.loads(chat_completion.choices[0].message.content)
-            return _build_report_from_json(data, filename, file_size_str, config)
+            return _build_report_from_json(data, filename, file_size_str, config, engine_name=f"Groq ({llm.split('/')[-1]})")
         except Exception as e:
             print(f"[Info] Groq LLM {llm} failed: {e}. Trying next...")
 
     raise RuntimeError("All Groq models failed")
 
-def _build_report_from_json(data: dict, filename: str, file_size_str: str, config: AnalysisConfigInput) -> AnalysisReport:
+def _build_report_from_json(
+    data: dict,
+    filename: str,
+    file_size_str: str,
+    config: AnalysisConfigInput,
+    engine_name: str = "Gemini 3.5 Flash"
+) -> AnalysisReport:
     """
     Safely constructs and sanitizes an AnalysisReport from raw LLM output,
     ensuring defensive clamping on scores, valid defaults, and null-coercion.
     """
     tone_raw = data.get("tone", {})
     breakdown_raw = tone_raw.get("sentimentBreakdown", {}) if isinstance(tone_raw, dict) else {}
+    rating_val = "RED" if str(tone_raw.get("rating", "")).upper() == "RED" else "GREEN"
+    conf_score = max(0, min(100, int(tone_raw.get("confidenceScore", 90))))
+
+    # Dynamically derive fallback scores from actual rating & confidence if model omitted them
+    if rating_val == "RED":
+        default_prof = max(20, min(60, 100 - conf_score))
+        default_emp = max(20, min(55, 95 - conf_score))
+        default_pat = max(20, min(50, 90 - conf_score))
+        default_frust = max(60, min(95, conf_score))
+    else:
+        default_prof = max(75, min(98, conf_score))
+        default_emp = max(70, min(95, conf_score - 5))
+        default_pat = max(75, min(98, conf_score))
+        default_frust = max(5, min(35, 100 - conf_score))
 
     sentiment_breakdown = SentimentBreakdown(
-        repProfessionalism=max(0, min(100, int(breakdown_raw.get("repProfessionalism", 85)))),
-        repEmpathy=max(0, min(100, int(breakdown_raw.get("repEmpathy", 80)))),
-        repPatience=max(0, min(100, int(breakdown_raw.get("repPatience", 85)))),
-        customerFrustration=max(0, min(100, int(breakdown_raw.get("customerFrustration", 25)))),
+        repProfessionalism=max(0, min(100, int(breakdown_raw.get("repProfessionalism", default_prof)))),
+        repEmpathy=max(0, min(100, int(breakdown_raw.get("repEmpathy", default_emp)))),
+        repPatience=max(0, min(100, int(breakdown_raw.get("repPatience", default_pat)))),
+        customerFrustration=max(0, min(100, int(breakdown_raw.get("customerFrustration", default_frust)))),
     )
 
     evidence_quotes = []
@@ -377,4 +412,5 @@ def _build_report_from_json(data: dict, filename: str, file_size_str: str, confi
         transcript=transcript_segments,
         configUsed=config,
         cached=False,
+        engineUsed=engine_name,
     )

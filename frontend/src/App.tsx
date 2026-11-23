@@ -280,6 +280,15 @@ export const App: React.FC = () => {
                 <span>Analysis for: <strong className="text-white">{currentReport.fileName}</strong></span>
                 <span>•</span>
                 <span>Uploaded {currentReport.uploadedAt}</span>
+                {currentReport.engineUsed && (
+                  <>
+                    <span>•</span>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 border border-indigo-500/20">
+                      <Sparkles className="h-3 w-3 text-indigo-400" />
+                      {currentReport.engineUsed}
+                    </span>
+                  </>
+                )}
                 {currentReport.cached && (
                   <>
                     <span>•</span>
