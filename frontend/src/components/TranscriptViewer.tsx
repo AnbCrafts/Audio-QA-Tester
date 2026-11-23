@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   MessagesSquare,
   Search,
@@ -11,6 +11,10 @@ import {
   X,
   Download,
   Copy,
+  ArrowUp,
+  ArrowDown,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { TranscriptSegment } from '../types';
 
@@ -33,6 +37,29 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
   const [editText, setEditText] = useState('');
   const [editSpeaker, setEditSpeaker] = useState('Sales Rep');
   const [copied, setCopied] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to top when a new transcript is loaded
+  useEffect(() => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [transcript]);
+
+  const scrollToTop = () => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const scrollToBottom = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
+  };
 
   const filteredSegments = transcript.filter((seg) => {
     const matchesSearch =
@@ -64,7 +91,7 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
 
   const handleCopyTranscript = () => {
     const fullText = transcript
-      .map((s) => `[${s.timestamp}] ${s.speaker}: ${s.text}`)
+      .map((s, idx) => `[Turn ${idx + 1} | ${s.timestamp}] ${s.speaker}: ${s.text}`)
       .join('\n');
     navigator.clipboard.writeText(fullText);
     setCopied(true);
@@ -73,7 +100,7 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
 
   const handleDownloadTranscript = () => {
     const fullText = transcript
-      .map((s) => `[${s.timestamp}] ${s.speaker}: ${s.text}`)
+      .map((s, idx) => `[Turn ${idx + 1} | ${s.timestamp}] ${s.speaker}: ${s.text}`)
       .join('\n');
     const blob = new Blob([fullText], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -85,7 +112,11 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
   };
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm shadow-lg flex flex-col h-[650px]">
+    <div
+      className={`rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm shadow-lg flex flex-col transition-all ${
+        isExpanded ? 'min-h-[850px]' : 'h-[650px]'
+      }`}
+    >
       {/* Header & Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
         <div>
@@ -94,17 +125,53 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
               <MessagesSquare className="h-5 w-5 text-amber-400" />
               Full Call Transcript ({transcript.length} Turns)
             </h3>
-            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-mono text-slate-300 border border-slate-700">
-              Editable
+            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-mono text-emerald-400 border border-slate-700">
+              Complete Conversation
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Complete verbatim dialogue. Click the pencil icon to correct any misheard terms or speaker tags.
+            Scroll up/down to browse all turns from 00:00 to end. Click pencil to edit misheard terms.
           </p>
         </div>
 
-        {/* Actions: Copy & Export */}
+        {/* Action Buttons */}
         <div className="flex items-center gap-2">
+          {/* Scroll Nav Buttons */}
+          <div className="flex items-center bg-slate-950 rounded-lg border border-slate-800 p-0.5">
+            <button
+              onClick={scrollToTop}
+              className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-900 rounded transition-colors cursor-pointer"
+              title="Scroll to Top (00:00)"
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={scrollToBottom}
+              className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-900 rounded transition-colors cursor-pointer"
+              title="Scroll to Bottom"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex items-center gap-1.5 rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
+            title={isExpanded ? 'Collapse height' : 'Expand full height'}
+          >
+            {isExpanded ? (
+              <>
+                <Minimize2 className="h-3.5 w-3.5" />
+                <span>Collapse</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="h-3.5 w-3.5" />
+                <span>Expand</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={handleCopyTranscript}
             className="flex items-center gap-1.5 rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
@@ -113,6 +180,7 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
             <Copy className="h-3.5 w-3.5" />
             <span>{copied ? 'Copied!' : 'Copy'}</span>
           </button>
+
           <button
             onClick={handleDownloadTranscript}
             className="flex items-center gap-1.5 rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
@@ -125,7 +193,7 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
       </div>
 
       {/* Search & Speaker Filter Bar */}
-      <div className="flex items-center justify-between gap-3 pt-3 pb-1">
+      <div className="flex items-center justify-between gap-3 pt-3 pb-2">
         <div className="relative flex-1">
           <Search className="h-3.5 w-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
@@ -171,21 +239,24 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
         </div>
       </div>
 
-      {/* Transcript Scroll Area */}
-      <div className="flex-1 overflow-y-auto mt-3 pr-2 space-y-3">
+      {/* Scrollable Transcript List */}
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto mt-2 pr-2 space-y-3"
+      >
         {filteredSegments.length === 0 ? (
           <div className="py-12 text-center text-xs text-slate-500">
             No dialogue matching your search filters.
           </div>
         ) : (
-          filteredSegments.map((seg) => {
+          filteredSegments.map((seg, index) => {
             const isRep = seg.isRep;
             const isActive = activeSegmentId === seg.id;
             const isEditingThis = editingId === seg.id;
 
             return (
               <div
-                key={seg.id}
+                key={seg.id || index}
                 className={`group rounded-xl p-3.5 transition-all border ${
                   isActive
                     ? 'border-amber-400 bg-amber-500/10 shadow-md'
@@ -197,6 +268,11 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                 {/* Segment Meta */}
                 <div className="flex items-center justify-between text-xs mb-1.5">
                   <div className="flex items-center gap-2">
+                    {/* Sequence Badge */}
+                    <span className="font-mono text-[10px] text-slate-500 font-semibold">
+                      #{index + 1}
+                    </span>
+
                     {/* Speaker Badge */}
                     <span
                       className={`inline-flex items-center gap-1 font-bold text-[11px] rounded px-2 py-0.5 ${
@@ -209,7 +285,7 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                       {seg.speaker}
                     </span>
 
-                    {/* Evidence Marker */}
+                    {/* Key moment marker */}
                     {seg.isFlaggedEvidence && (
                       <span className="flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
                         <Sparkles className="h-3 w-3" /> Key Moment / Action
