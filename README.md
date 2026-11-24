@@ -38,6 +38,9 @@ For complete, exhaustive technical specifications, refer to the following compre
 5. **[Technical Presentation & Product Pitch Guide](file:///f:/ScaleWorks_Assignment/TECHNICAL_PRESENTATION_AND_PRODUCT_PITCH.md)**:
    - Step-by-step presentation script designed for recruiters, hiring managers, and senior engineers.
    - How to position the application as an engineering approach and architecture first, bridging into a commercial, high-margin B2B SaaS revenue intelligence product.
+6. **[Master Edge Cases & Security Vulnerabilities Audit](file:///f:/ScaleWorks_Assignment/COMPREHENSIVE_EDGE_CASES_AND_SECURITY.md)**:
+   - Exhaustive audit of all audio, multilingual, conversational, and token economics edge cases.
+   - Cybersecurity defenses: API key isolation, DoS file upload bounds, temporary file cleanup, prompt injection, and pre-execution token loss prevention.
 
 ---
 
