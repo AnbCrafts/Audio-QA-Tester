@@ -10,6 +10,13 @@ interface ToneCardProps {
 export const ToneCard: React.FC<ToneCardProps> = ({ tone, onJumpToTimestamp }) => {
   const isGreen = tone.rating === 'GREEN';
 
+  // Calculate weighted overall QA score (Professionalism 40%, Patience 35%, Empathy 25%)
+  const qualityScore = Math.round(
+    0.4 * tone.sentimentBreakdown.repProfessionalism +
+    0.35 * tone.sentimentBreakdown.repPatience +
+    0.25 * tone.sentimentBreakdown.repEmpathy
+  );
+
   return (
     <div
       className={`relative overflow-hidden rounded-2xl border p-6 backdrop-blur-md transition-all shadow-xl ${
@@ -26,7 +33,7 @@ export const ToneCard: React.FC<ToneCardProps> = ({ tone, onJumpToTimestamp }) =
             className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 font-black text-sm tracking-wide shadow-md ${
               isGreen
                 ? 'bg-emerald-500 text-slate-950 shadow-emerald-500/20'
-                : 'bg-rose-500 text-white shadow-rose-500/30 animate-pulse'
+                : 'bg-rose-500 text-white shadow-rose-500/30'
             }`}
           >
             {isGreen ? (
@@ -48,21 +55,36 @@ export const ToneCard: React.FC<ToneCardProps> = ({ tone, onJumpToTimestamp }) =
           </div>
         </div>
 
-        {/* Confidence Meter */}
-        <div className="flex items-center gap-3 bg-slate-950/80 px-3.5 py-1.5 rounded-xl border border-slate-800">
-          <div className="text-right">
-            <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-              Model Confidence
+        {/* Score & Threshold Meters */}
+        <div className="flex items-center gap-3">
+          {/* Overall Quality Score Meter */}
+          <div className="flex items-center gap-2.5 bg-slate-950/80 px-3.5 py-1.5 rounded-xl border border-slate-800">
+            <div className="text-right">
+              <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                Overall Quality
+              </div>
+              <div className={`text-sm font-mono font-bold ${isGreen ? 'text-emerald-400' : 'text-rose-400'}`}>
+                {qualityScore} / 100
+              </div>
             </div>
-            <div className="text-sm font-mono font-bold text-white">
-              {tone.confidenceScore}%
+            <div className="h-2 w-16 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className={`h-full rounded-full ${isGreen ? 'bg-emerald-400' : 'bg-rose-400'}`}
+                style={{ width: `${qualityScore}%` }}
+              />
             </div>
           </div>
-          <div className="h-2 w-16 rounded-full bg-slate-800 overflow-hidden">
-            <div
-              className={`h-full rounded-full ${isGreen ? 'bg-emerald-400' : 'bg-rose-400'}`}
-              style={{ width: `${tone.confidenceScore}%` }}
-            />
+
+          {/* Model Confidence */}
+          <div className="flex items-center gap-2.5 bg-slate-950/80 px-3.5 py-1.5 rounded-xl border border-slate-800">
+            <div className="text-right">
+              <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                Confidence
+              </div>
+              <div className="text-sm font-mono font-bold text-white">
+                {tone.confidenceScore}%
+              </div>
+            </div>
           </div>
         </div>
       </div>

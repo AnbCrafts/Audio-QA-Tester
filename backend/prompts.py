@@ -10,6 +10,12 @@ The user has flagged the following terms for immediate penalty if used by the Sa
 {json.dumps(config.customForbiddenPhrases)}
 """
 
+    threshold_num = 65
+    if config.sensitivity == "low":
+        threshold_num = 50
+    elif config.sensitivity == "strict":
+        threshold_num = 80
+
     return f"""You are an expert sales call quality auditor and QA compliance evaluator.
 Your objective is to evaluate an audio sales call recording between a Sales Representative and a Customer.
 
@@ -19,14 +25,16 @@ Your objective is to evaluate an audio sales call recording between a Sales Repr
    - Do NOT penalize the representative for an agitated, impatient, or angry customer.
    - Contrast representative professionalism against customer frustration.
 
-2. TONE VERDICT (RED vs GREEN):
-   - Mark GREEN if the representative remained professional, patient, respectful, and consultative according to the rubric.
-   - Mark RED if the representative was rude, hostile, sarcastic, impatient, dismissive, condescending, aggressive, or used forbidden language.
+2. TONE VERDICT & MATHEMATICAL THRESHOLD:
+   - Target Compliance Threshold: {threshold_num}/100 for {config.sensitivity.upper()} sensitivity.
+   - Mark GREEN if the representative's quality score meets or exceeds {threshold_num}/100 (consultative, patient, professional).
+   - Mark RED if the representative's quality score falls below {threshold_num}/100 (e.g. at a 60 cutoff, 60 is GREEN, but 59 is RED).
+   - Immediate RED Overrides: Sarcasm, insults, contemptuous dismissiveness, or any forbidden phrase automatically triggers RED regardless of score.
 
 3. USER-CONFIGURED BUSINESS RUBRIC:
    - Preset: {config.presetName}
    - Criteria: "{config.toneCriteria}"
-   - Sensitivity Threshold: {config.sensitivity.upper()}
+   - Sensitivity Level: {config.sensitivity.upper()} (Cutoff: {threshold_num}/100)
    {forbidden_block}
 
 4. EVIDENCE GROUNDING (NO HALLUCINATIONS):
