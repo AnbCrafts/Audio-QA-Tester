@@ -191,8 +191,8 @@ export const App: React.FC = () => {
         isBackendConnected={isBackendConnected}
       />
 
-      {/* Main Container */}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 space-y-6">
+      {/* Main Container taking 90% page width */}
+      <main className="mx-auto w-[90%] flex-1 py-8 space-y-6">
         {/* Upload Area */}
         <UploadDropzone
           onFileUpload={handleFileUpload}
@@ -237,7 +237,7 @@ export const App: React.FC = () => {
             </p>
 
             {/* Feature highlights preview */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-3xl mx-auto mt-8 text-left">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl mx-auto mt-8 text-left">
               <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-4">
                 <div className="flex items-center gap-2 text-xs font-bold text-white mb-1">
                   <MessagesSquare className="h-4 w-4 text-amber-400" />

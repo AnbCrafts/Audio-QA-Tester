@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileAudio, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { UploadCloud, FileAudio, CheckCircle2, AlertCircle, Loader2, Sparkles } from 'lucide-react';
 
 interface UploadDropzoneProps {
   onFileUpload: (file: File) => void;
@@ -56,6 +56,19 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       validateAndProcess(e.target.files[0]);
+    }
+  };
+
+  const handleLoadSample = async (url: string, filename: string) => {
+    try {
+      setErrorMsg(null);
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Could not fetch sample audio');
+      const blob = await res.blob();
+      const file = new File([blob], filename, { type: 'audio/mp4' });
+      onFileUpload(file);
+    } catch (e: any) {
+      setErrorMsg(`Failed to load sample call: ${e.message}`);
     }
   };
 
@@ -130,6 +143,51 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
           </div>
         )}
       </div>
+
+      {/* 1-Click Quick Demo Audio Pills */}
+      {!isProcessing && (
+        <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <span className="text-slate-400 font-medium flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+            Quick Demo Calls (1-Click Test):
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLoadSample('/test_call_green.m4a', 'test_call_green.m4a');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:border-emerald-500/40 transition-all cursor-pointer"
+            >
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              🟢 GREEN Compliant Call
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLoadSample('/test_call_red.m4a', 'test_call_red.m4a');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 hover:border-rose-500/40 transition-all cursor-pointer"
+            >
+              <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+              🔴 RED Hostile Violation Call
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLoadSample('/test_call_multilingual.m4a', 'test_call_multilingual.m4a');
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 border border-amber-500/20 hover:bg-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer"
+            >
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+              🌐 Hindi/Hinglish Retail Order (46 Turns)
+            </button>
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="mt-3 flex items-center gap-2 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-400 border border-rose-500/20">
