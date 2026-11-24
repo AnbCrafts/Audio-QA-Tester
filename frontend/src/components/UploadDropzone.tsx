@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileAudio, CheckCircle2, AlertCircle, Loader2, Sparkles } from 'lucide-react';
+import { UploadCloud, FileAudio, CheckCircle2, AlertCircle, Loader2, Sparkles, ChevronDown } from 'lucide-react';
 
 interface UploadDropzoneProps {
   onFileUpload: (file: File) => void;
@@ -151,17 +151,17 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
             <Sparkles className="h-3.5 w-3.5 text-amber-400" />
             Quick Demo Calls (1-Click Test):
           </span>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 handleLoadSample('/test_call_green.m4a', 'test_call_green.m4a');
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:border-emerald-500/40 transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 hover:border-emerald-500/40 transition-all cursor-pointer"
             >
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              🟢 GREEN Compliant Call
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              GREEN Compliant Call
             </button>
             <button
               type="button"
@@ -169,22 +169,43 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
                 e.stopPropagation();
                 handleLoadSample('/test_call_red.m4a', 'test_call_red.m4a');
               }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 hover:border-rose-500/40 transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-lg bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 hover:border-rose-500/40 transition-all cursor-pointer"
             >
-              <span className="h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
-              🔴 RED Hostile Violation Call
+              <span className="h-2 w-2 rounded-full bg-rose-400" />
+              RED Hostile Violation Call
             </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleLoadSample('/test_call_multilingual.m4a', 'test_call_multilingual.m4a');
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-300 border border-amber-500/20 hover:bg-amber-500/20 hover:border-amber-500/40 transition-all cursor-pointer"
-            >
-              <span className="h-2 w-2 rounded-full bg-amber-400" />
-              🌐 Hindi/Hinglish Retail Order (46 Turns)
-            </button>
+
+            {/* Language / Multilingual Call Selection Dropdown (No duplicate dots or globe icons) */}
+            <div className="relative inline-flex items-center" onClick={(e) => e.stopPropagation()}>
+              <select
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val) {
+                    handleLoadSample(val, val.split('/').pop() || 'sample.m4a');
+                    e.target.value = '';
+                  }
+                }}
+                defaultValue=""
+                className="appearance-none rounded-lg bg-slate-900 border border-slate-700/80 px-3 py-1.5 pr-8 text-xs font-semibold text-amber-300 hover:text-white hover:border-amber-500/40 focus:outline-none focus:border-amber-400 transition-all cursor-pointer shadow-sm"
+              >
+                <option value="" disabled className="bg-slate-900 text-slate-400">
+                  Select Language / Call...
+                </option>
+                <option value="/test_call_multilingual.m4a" className="bg-slate-900 text-white">
+                  Hindi / Hinglish Retail Order (46 Turns)
+                </option>
+                <option value="/test1.m4a" className="bg-slate-900 text-white">
+                  Hindi Order Recording #1
+                </option>
+                <option value="/test2.m4a" className="bg-slate-900 text-white">
+                  Hindi Order Recording #2
+                </option>
+                <option value="/test7.m4a" className="bg-slate-900 text-white">
+                  Hindi Order Recording #7
+                </option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 h-3.5 w-3.5 text-amber-400/80" />
+            </div>
           </div>
         </div>
       )}
