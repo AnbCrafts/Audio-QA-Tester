@@ -32,6 +32,12 @@ For complete, exhaustive technical specifications, refer to the following compre
    - Complete prompt catalog for Gemini and Groq with dynamic parameter injection.
    - 4 industry presets (*B2B SaaS*, *Debt Collection / Financial Recovery*, *Real Estate & Advisory*, *Custom*).
    - Sample user configuration payloads and custom rule evaluation tests.
+4. **[Interview Preparation & Deep Technical Q&A](file:///f:/ScaleWorks_Assignment/INTERVIEW_PREPARATION_AND_DEEP_QA.md)**:
+   - Comprehensive question bank covering high-level architecture, audio diarization, LLM hallucination prevention, scoring math, concurrency, and real debugging stories.
+   - Ready-to-use answers on enterprise scaling (100k calls/day), PII redaction, and security compliance.
+5. **[Technical Presentation & Product Pitch Guide](file:///f:/ScaleWorks_Assignment/TECHNICAL_PRESENTATION_AND_PRODUCT_PITCH.md)**:
+   - Step-by-step presentation script designed for recruiters, hiring managers, and senior engineers.
+   - How to position the application as an engineering approach and architecture first, bridging into a commercial, high-margin B2B SaaS revenue intelligence product.
 
 ---
 
