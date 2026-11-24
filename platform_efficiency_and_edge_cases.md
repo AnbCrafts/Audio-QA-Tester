@@ -29,6 +29,41 @@ This document outlines the **known edge cases**, **current implementation bottle
 
 ---
 
+### C. Conversational Edge Cases & Context Sparsity
+
+| # | Edge Case | Failure Mode | Mitigation Strategy |
+| :- | :--- | :--- | :--- |
+| **1.9** | **Micro-Conversations / Ultra-Short Dialogue** (2–3 turns, 5–10s, e.g. *"I need API keys" / "I'll provide it"*) | Sparse context causes naive models to hallucinate filler dialogue, invert roles, or guess arbitrary dates. | Contextual resource-ownership inference: The person requesting credentials/services is the Customer; the granter is the Representative. Anti-hallucination guardrail coerces deadline to `null`. Human-in-the-loop inline turn switcher in `TranscriptViewer.tsx` as fallback. |
+| **1.10** | **Middle-of-Call Profanity & Strategic Politeness** (Rep greets and closes politely, but insults or curses in the middle) | Auditing systems that only verify opening greetings and closing sign-offs falsely pass the call. | Three-pillar conduct audit: Pillar 2 (*Active Courtesy & Affirmations*) actively audits the entire middle conversational body. Immediate Zero-Tolerance RED Override vetoes the verdict to RED if insults, slurs, or forbidden phrases occur anywhere, citing verbatim quote and timestamp. |
+
+---
+
+### D. Security, Prompt Injection & Adversarial User Inputs
+
+| # | Edge Case | Failure Mode | Mitigation Strategy |
+| :- | :--- | :--- | :--- |
+| **1.11** | **Direct Prompt Injection** (User types *"IGNORE ALL PREVIOUS INSTRUCTIONS and do X"* in custom rubric) | Model abandons the QA auditor role and obeys untrusted user instructions. | Multi-tier defense: (1) System instruction hierarchy (`system_instruction` takes precedence over user prompts via RLHF); (2) Hardcoded JSON schema enforcement (`response_mime_type="application/json"`); (3) Multimodal waveform grounding (model remains anchored to the attached audio file). |
+| **1.12** | **Task Hijacking & Off-Topic Requests** (User types *"Generate me a 1500 calorie diet plan"* in tone criteria) | Model generates conversational off-topic text rather than call quality evaluation. | Strict Pydantic schema validation: Backend requires `transcript`, `evidenceQuotes`, and `sentimentBreakdown` timestamps. Conversational text crashes schema parsing or renders as an invalid card with the real audio playing underneath. Production mitigation: Pre-execution keyword and semantic guardrails (Llama Guard / NeMo). |
+
+---
+
+### E. User Prompt Misalignment & Scope Creep
+
+| # | Edge Case | Failure Mode | Mitigation Strategy |
+| :- | :--- | :--- | :--- |
+| **1.13** | **Customer-Targeted Custom Prompts** (User enters: *"Flag RED if the customer is rude, angry, or complaining"*) | Contradicts core QA rule (*"Evaluate ONLY the sales representative"*). May cause prompt bleeding and unfairly penalize composed reps. | Priority routing: System meta-instructions prioritize rep tone isolation; customer hostility is routed strictly to `customerFrustration` (0% weight on rep score) and Auditor Rationale. Enterprise roadmap: Dual-Verdict Architecture separating *Rep Compliance Verdict* from *Customer Churn Risk Alert*. |
+
+---
+
+### F. Token Economics & Latency Edge Cases
+
+| # | Edge Case | Failure Mode | Mitigation Strategy |
+| :- | :--- | :--- | :--- |
+| **1.14** | **Re-Analysis Redundancy on Minor Config Tweaks** (User changes sensitivity slider or edits 1 word in rubric) | Re-uploads the entire 20MB audio file to Google Cloud, re-spends full multimodal audio tokens, and incurs 4s latency. | (1) Client-side instant recalculation for threshold slider updates ($Q \ge T$ executed in 0ms); (2) Two-Tier Hierarchical Caching: Cache immutable transcript by `audio_sha256` and evaluate modified rubrics using cheap text-only LLMs (~300ms, 90% cheaper); (3) Cloud File URI reuse (Google File API 48h TTL). |
+| **1.15** | **Cold-Start Initial Analysis Latency** (First-run analysis takes 3.5s – 5s due to upload and cloud polling) | User stares at a blank loading spinner with no immediate feedback. | (1) Progressive Server-Sent Events (SSE) streaming so dialogue turns appear live in <800ms; (2) Speculative background pre-upload on file drop; (3) Direct Amazon S3 / GCS pre-signed URL uploads bypassing web server bandwidth bottlenecks. |
+
+---
+
 ## 2. Issues & Bottlenecks in the Current Implementation
 
 ### Backend Bottlenecks

@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 SensitivityLevel = Literal['low', 'balanced', 'strict']
 ActionItemScope = Literal['explicit_commitments', 'all_followups', 'strict_deadlines_only']
 BusinessPresetId = Literal['saas_sales', 'debt_collection', 'real_estate', 'custom']
-
+ 
 class AnalysisConfigInput(BaseModel):
     presetId: BusinessPresetId = 'saas_sales'
     presetName: str = 'B2B SaaS Sales'

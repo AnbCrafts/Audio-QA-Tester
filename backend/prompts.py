@@ -7,7 +7,7 @@ def build_system_prompt(config: AnalysisConfigInput) -> str:
         forbidden_block = f"""
 Additional Monitored/Forbidden Phrases:
 The user has flagged the following terms for immediate penalty if used by the Sales Representative:
-{json.dumps(config.customForbiddenPhrases)}
+{json.dumps(config.customForbiddenPhrases)} 
 """
 
     threshold_num = 65
