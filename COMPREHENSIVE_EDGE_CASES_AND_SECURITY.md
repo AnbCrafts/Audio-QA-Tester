@@ -13,6 +13,7 @@ This document is the definitive master catalog of all edge cases, conversational
 5. [Token Economics, Cost & Latency Edge Cases](#5-token-economics-cost--latency-edge-cases)
 6. [Cybersecurity Vulnerabilities & Mitigations](#6-cybersecurity-vulnerabilities--mitigations)
 7. [Pre-Execution Token Loss: The Pydantic Defense Paradox](#7-pre-execution-token-loss-the-pydantic-defense-paradox)
+8. [Backend Execution Commands & Operational Guide](#8-backend-execution-commands--operational-guide)
 
 ---
 
@@ -246,3 +247,40 @@ To prevent **financial token waste**, security must be enforced **BEFORE the LLM
 
 4. **Per-User Rate Limiting (Token Buckets)**:
    Enforce rate limits (e.g. max 5 analysis requests per IP per minute) to prevent automated scripts from draining API credits.
+
+---
+
+# 8. Backend Execution Commands & Operational Guide
+
+To verify all edge-case mitigations, run the FastAPI backend server using either of the following commands in your terminal:
+
+### Option A: Standard PowerShell Execution (With Virtual Environment)
+```powershell
+# 1. Navigate to backend directory
+cd f:\ScaleWorks_Assignment\backend
+
+# 2. Activate Python virtual environment
+.\.venv\Scripts\Activate.ps1
+
+# 3. Start FastAPI server with live hot-reload
+python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+---
+
+### Option B: Direct 1-Liner (No Manual Activation Needed)
+```powershell
+f:\ScaleWorks_Assignment\backend\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload --app-dir f:\ScaleWorks_Assignment\backend
+```
+
+---
+
+### Key Operational Endpoints & Verification
+
+| Action / Resource | Command / URL | Expected Response / Status |
+| :--- | :--- | :--- |
+| **Backend Health Check** | `GET http://127.0.0.1:8000/api/health` | `{"status": "healthy", "gemini_configured": true, "groq_configured": true}` |
+| **Interactive Swagger Docs** | `http://127.0.0.1:8000/docs` | OpenAPI / Swagger interactive testing dashboard |
+| **Purge Disk Cache** | `DELETE http://127.0.0.1:8000/api/cache` | `{"status": "cache_cleared", "deleted_files": X}` |
+| **Complementary Frontend** | `cd f:\ScaleWorks_Assignment\frontend; npm run dev` | Runs React on `http://localhost:3000` |
+
