@@ -333,6 +333,7 @@ export const App: React.FC = () => {
             {/* Tone Evaluation Card */}
             <ToneCard
               tone={currentReport.tone}
+              callMetadata={currentReport.callMetadata}
               onJumpToTimestamp={handleJumpToTimestamp}
             />
 

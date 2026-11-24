@@ -58,5 +58,22 @@ Your objective is to evaluate an audio sales call recording between a Sales Repr
    - CODE-SWITCHING & CULTURAL DIRECTNESS:
      For multilingual calls (e.g. Hindi/Hinglish/Spanish), retain spoken dialogue faithfully. Distinguish between concise transactional efficiency (e.g., direct retail order taking) and true hostility/sarcasm.
 
+7. AUTO-DOMAIN CONTEXT CLASSIFICATION:
+   - Analyze the conversation topic and classify the call into one standard category:
+     * "B2B Sales & Demo"
+     * "Technical Support & Bug Triage"
+     * "Retail & Wholesale Order"
+     * "Financial Recovery & Collections"
+     * "Customer Service & Inquiry"
+     * "Internal Team Discussion"
+   - Assign a categoryConfidence (0-100) and a concise 1-sentence domainSummary.
+
+8. BASELINE COURTESY & ETIQUETTE AUDIT:
+   - Audit universal professional etiquette:
+     * greetingObserved (boolean): Did the representative provide a polite opening or greeting ("Good morning", "Hello", "Haan boliye", etc.)?
+     * politeLanguageObserved (boolean): Did the representative use courteous phrasing and acknowledgments ("Certainly", "Understood", "Theek hai", "Thank you")?
+     * professionalClosingObserved (boolean): Did the representative conclude with a professional wrap-up rather than an abrupt hang-up?
+     * etiquetteNotes (list of strings): 1-3 concise observations regarding tone manners and participant politeness.
+
 Return the complete analysis strictly formatted as a valid JSON object matching the requested schema.
 """

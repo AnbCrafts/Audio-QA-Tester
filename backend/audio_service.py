@@ -10,6 +10,7 @@ from schemas import (
     TranscriptSegment,
     EvidenceQuote,
     SentimentBreakdown,
+    CallMetadata,
 )
 from prompts import build_system_prompt
 
@@ -145,7 +146,18 @@ def _call_gemini(file_path: str, filename: str, file_size_str: str, config: Anal
           "text": "Actual verbatim dialogue spoken",
           "isFlaggedEvidence": false
         }}
-      ]
+      ],
+      "callMetadata": {{
+        "detectedCategory": "Technical Support & Bug Triage" or "B2B Sales & Demo" or "Retail & Wholesale Order",
+        "categoryConfidence": 95,
+        "domainSummary": "One sentence summary of call context",
+        "greetingObserved": true,
+        "politeLanguageObserved": true,
+        "professionalClosingObserved": true,
+        "etiquetteNotes": [
+          "Polite greeting observed at call start"
+        ]
+      }}
     }}
     """
 
@@ -259,7 +271,16 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
           "text": "spoken turn text",
           "isFlaggedEvidence": false
         }}
-      ]
+      ],
+      "callMetadata": {{
+        "detectedCategory": "Technical Support & Bug Triage" or "B2B Sales & Demo" or "Retail & Wholesale Order",
+        "categoryConfidence": 90,
+        "domainSummary": "Brief summary",
+        "greetingObserved": true,
+        "politeLanguageObserved": true,
+        "professionalClosingObserved": true,
+        "etiquetteNotes": ["Courteous dialogue observed"]
+      }}
     }}
     """
 
@@ -400,6 +421,17 @@ def _build_report_from_json(
             isFlaggedEvidence=bool(seg.get("isFlaggedEvidence", False))
         ))
 
+    meta_raw = data.get("callMetadata") or data.get("metadata") or {}
+    call_metadata = CallMetadata(
+        detectedCategory=str(meta_raw.get("detectedCategory") or "General Business Discussion"),
+        categoryConfidence=max(0, min(100, int(meta_raw.get("categoryConfidence", 92)))),
+        domainSummary=str(meta_raw.get("domainSummary", "")).strip() or None,
+        greetingObserved=bool(meta_raw.get("greetingObserved", True)),
+        politeLanguageObserved=bool(meta_raw.get("politeLanguageObserved", True)),
+        professionalClosingObserved=bool(meta_raw.get("professionalClosingObserved", True)),
+        etiquetteNotes=[str(n).strip() for n in meta_raw.get("etiquetteNotes", []) if str(n).strip()]
+    )
+
     return AnalysisReport(
         callId=f"call_{int(time.time())}",
         fileName=filename,
@@ -411,6 +443,7 @@ def _build_report_from_json(
         actionItems=action_items,
         transcript=transcript_segments,
         configUsed=config,
+        callMetadata=call_metadata,
         cached=False,
         engineUsed=engine_name,
     )

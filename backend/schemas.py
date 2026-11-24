@@ -56,6 +56,15 @@ class TranscriptSegment(BaseModel):
     text: str
     isFlaggedEvidence: Optional[bool] = False
 
+class CallMetadata(BaseModel):
+    detectedCategory: str = "General Business Call"
+    categoryConfidence: int = Field(default=90, ge=0, le=100)
+    domainSummary: Optional[str] = None
+    greetingObserved: bool = True
+    politeLanguageObserved: bool = True
+    professionalClosingObserved: bool = True
+    etiquetteNotes: List[str] = Field(default_factory=list)
+
 class AnalysisReport(BaseModel):
     callId: str
     fileName: str
@@ -67,6 +76,7 @@ class AnalysisReport(BaseModel):
     actionItems: List[ActionItem]
     transcript: List[TranscriptSegment]
     configUsed: AnalysisConfigInput
+    callMetadata: Optional[CallMetadata] = None
     cached: Optional[bool] = False
     engineUsed: Optional[str] = "Gemini 3.5 Flash"
     errorMessage: Optional[str] = None

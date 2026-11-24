@@ -1,13 +1,14 @@
 import React from 'react';
-import { AlertOctagon, CheckCircle2, ShieldCheck, Quote, HelpCircle, BarChart3, UserCheck } from 'lucide-react';
-import { ToneAnalysisResult } from '../types';
+import { AlertOctagon, CheckCircle2, ShieldCheck, Quote, HelpCircle, BarChart3, UserCheck, Compass, Sparkles, Check, X, MessageCircleHeart } from 'lucide-react';
+import { ToneAnalysisResult, CallMetadata } from '../types';
 
 interface ToneCardProps {
   tone: ToneAnalysisResult;
+  callMetadata?: CallMetadata | null;
   onJumpToTimestamp?: (timestamp: string) => void;
 }
 
-export const ToneCard: React.FC<ToneCardProps> = ({ tone, onJumpToTimestamp }) => {
+export const ToneCard: React.FC<ToneCardProps> = ({ tone, callMetadata, onJumpToTimestamp }) => {
   const isGreen = tone.rating === 'GREEN';
 
   // Calculate weighted overall QA score (Professionalism 40%, Patience 35%, Empathy 25%)
@@ -91,6 +92,26 @@ export const ToneCard: React.FC<ToneCardProps> = ({ tone, onJumpToTimestamp }) =
 
       {/* Main Analysis Body */}
       <div className="mt-5 space-y-4">
+        {/* Auto-Detected Domain Banner */}
+        {callMetadata && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-500/10 px-2.5 py-1 text-xs font-semibold text-indigo-300 border border-indigo-500/20">
+                <Compass className="h-3.5 w-3.5 text-indigo-400" />
+                Auto-Detected Domain: <strong className="text-white">{callMetadata.detectedCategory}</strong>
+              </span>
+              <span className="text-[11px] font-mono text-slate-400">
+                ({callMetadata.categoryConfidence}% match)
+              </span>
+            </div>
+            {callMetadata.domainSummary && (
+              <p className="text-[11px] text-slate-400 italic">
+                "{callMetadata.domainSummary}"
+              </p>
+            )}
+          </div>
+        )}
+
         <div>
           <h3 className="text-base font-bold text-white flex items-center gap-2">
             {tone.headline}
@@ -126,6 +147,74 @@ export const ToneCard: React.FC<ToneCardProps> = ({ tone, onJumpToTimestamp }) =
               {tone.sentimentBreakdown.customerFrustration}/100
             </span>
           </div>
+        </div>
+
+        {/* Universal Politeness & Etiquette Checklist */}
+        <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3.5">
+          <div className="flex items-center justify-between mb-2.5">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <MessageCircleHeart className="h-3.5 w-3.5 text-amber-400" />
+              Universal Politeness & Etiquette Checklist
+            </h4>
+            <span className="text-[11px] text-slate-500">
+              Baseline Conduct Audit
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {/* 1. Polite Greeting */}
+            <div className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-medium ${
+              callMetadata?.greetingObserved !== false
+                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
+                : 'border-rose-500/20 bg-rose-500/5 text-rose-300'
+            }`}>
+              {callMetadata?.greetingObserved !== false ? (
+                <Check className="h-4 w-4 text-emerald-400 shrink-0" />
+              ) : (
+                <X className="h-4 w-4 text-rose-400 shrink-0" />
+              )}
+              <span>Greeting & Politeness Opening</span>
+            </div>
+
+            {/* 2. Respectful Acknowledgments */}
+            <div className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-medium ${
+              callMetadata?.politeLanguageObserved !== false
+                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
+                : 'border-rose-500/20 bg-rose-500/5 text-rose-300'
+            }`}>
+              {callMetadata?.politeLanguageObserved !== false ? (
+                <Check className="h-4 w-4 text-emerald-400 shrink-0" />
+              ) : (
+                <X className="h-4 w-4 text-rose-400 shrink-0" />
+              )}
+              <span>Active Courtesy & Affirmations</span>
+            </div>
+
+            {/* 3. Professional Closing */}
+            <div className={`flex items-center gap-2 p-2.5 rounded-lg border text-xs font-medium ${
+              callMetadata?.professionalClosingObserved !== false
+                ? 'border-emerald-500/20 bg-emerald-500/5 text-emerald-300'
+                : 'border-rose-500/20 bg-rose-500/5 text-rose-300'
+            }`}>
+              {callMetadata?.professionalClosingObserved !== false ? (
+                <Check className="h-4 w-4 text-emerald-400 shrink-0" />
+              ) : (
+                <X className="h-4 w-4 text-rose-400 shrink-0" />
+              )}
+              <span>Professional Closing / Sign-off</span>
+            </div>
+          </div>
+
+          {/* Notes if available */}
+          {callMetadata?.etiquetteNotes && callMetadata.etiquetteNotes.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap gap-1.5 pt-2 border-t border-slate-900">
+              {callMetadata.etiquetteNotes.map((note, idx) => (
+                <span key={idx} className="rounded-md bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300 border border-slate-800">
+                  • {note}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Evidence Citations (Grounding) */}

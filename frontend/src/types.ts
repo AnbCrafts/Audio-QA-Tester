@@ -65,6 +65,16 @@ export interface ToneAnalysisResult {
   };
 }
 
+export interface CallMetadata {
+  detectedCategory: string;
+  categoryConfidence: number;
+  domainSummary?: string | null;
+  greetingObserved: boolean;
+  politeLanguageObserved: boolean;
+  professionalClosingObserved: boolean;
+  etiquetteNotes: string[];
+}
+
 export interface AnalysisReport {
   callId: string;
   fileName: string;
@@ -76,6 +86,7 @@ export interface AnalysisReport {
   actionItems: ActionItem[];
   transcript: TranscriptSegment[];
   configUsed: AnalysisConfig;
+  callMetadata?: CallMetadata;
   cached?: boolean;
   engineUsed?: string;
   status: 'processing' | 'completed' | 'error';
