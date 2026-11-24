@@ -55,3 +55,14 @@ temp/
 Thumbs.db
 .vscode/
 .idea/
+
+# Internal Engineering & Interview Preparation Docs (Keep local, omit from public repo)
+ARCHITECTURE_AND_SYSTEM_DESIGN.md
+COMPREHENSIVE_EDGE_CASES_AND_SECURITY.md
+CONFIGURATIONS_PROMPTS_AND_SENSITIVITY.md
+EVALUATION_THRESHOLDS_AND_CRITERIA.md
+INTERVIEW_PREPARATION_AND_DEEP_QA.md
+PLAN.md
+platform_efficiency_and_edge_cases.md
+TECHNICAL_PRESENTATION_AND_PRODUCT_PITCH.md
+

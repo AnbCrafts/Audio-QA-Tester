@@ -15,34 +15,7 @@ An intelligent, multi-business web application that processes `.m4a` sales call 
 
 ---
 
-## 📚 Deep-Dive Technical Documentation
-
-For complete, exhaustive technical specifications, refer to the following comprehensive documentation guides:
-
-1. **[Architecture & System Design](file:///f:/ScaleWorks_Assignment/ARCHITECTURE_AND_SYSTEM_DESIGN.md)**:
-   - Full end-to-end architecture diagram, data lifecycle, class/method mappings, and file responsibilities.
-   - Dual-engine multimodal AI pipeline (Gemini 3.5 Flash + Groq Whisper/Qwen fallback).
-   - Content-addressed deterministic SHA-256 caching mechanics with poison safeguards.
-   - Comprehensive edge-case mitigations and architectural trade-offs (pros/cons vs. alternatives).
-2. **[Evaluation Thresholds & Criteria](file:///f:/ScaleWorks_Assignment/EVALUATION_THRESHOLDS_AND_CRITERIA.md)**:
-   - Mathematical formula for composite Quality Score ($Q$).
-   - Sensitivity cutoffs ($50$, $65$, $80$), decision boundary conditions (e.g. why 60 is GREEN and 59 is RED), and automatic zero-tolerance RED overrides.
-   - Isolated Customer Friction score ($0\%$ weight on rep evaluation).
-3. **[Configurations, Prompts & Sensitivity Catalog](file:///f:/ScaleWorks_Assignment/CONFIGURATIONS_PROMPTS_AND_SENSITIVITY.md)**:
-   - Complete prompt catalog for Gemini and Groq with dynamic parameter injection.
-   - 4 industry presets (*B2B SaaS*, *Debt Collection / Financial Recovery*, *Real Estate & Advisory*, *Custom*).
-   - Sample user configuration payloads and custom rule evaluation tests.
-4. **[Interview Preparation & Deep Technical Q&A](file:///f:/ScaleWorks_Assignment/INTERVIEW_PREPARATION_AND_DEEP_QA.md)**:
-   - Comprehensive question bank covering high-level architecture, audio diarization, LLM hallucination prevention, scoring math, concurrency, and real debugging stories.
-   - Ready-to-use answers on enterprise scaling (100k calls/day), PII redaction, and security compliance.
-5. **[Technical Presentation & Product Pitch Guide](file:///f:/ScaleWorks_Assignment/TECHNICAL_PRESENTATION_AND_PRODUCT_PITCH.md)**:
-   - Step-by-step presentation script designed for recruiters, hiring managers, and senior engineers.
-   - How to position the application as an engineering approach and architecture first, bridging into a commercial, high-margin B2B SaaS revenue intelligence product.
-6. **[Master Edge Cases & Security Vulnerabilities Audit](file:///f:/ScaleWorks_Assignment/COMPREHENSIVE_EDGE_CASES_AND_SECURITY.md)**:
-   - Exhaustive audit of all audio, multilingual, conversational, and token economics edge cases.
-   - Cybersecurity defenses: API key isolation, DoS file upload bounds, temporary file cleanup, prompt injection, and pre-execution token loss prevention.
-
----
+## 🏗️ Architecture
 
 ```
                        ┌─────────────────────────┐
