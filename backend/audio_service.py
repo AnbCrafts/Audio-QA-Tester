@@ -303,6 +303,162 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
 
     raise RuntimeError("All Groq models failed")
 
+def reanalyze_from_transcript(
+    audio_base: dict,
+    filename: str,
+    file_size_str: str,
+    config: AnalysisConfigInput
+) -> AnalysisReport:
+    """
+    Tier-1 Fast Re-Evaluation Engine (~300ms):
+    Takes the verified, cached transcript from Tier-1 cache and executes pure text LLM reasoning
+    with the new business preset, tone criteria, sensitivity cutoff, and forbidden phrases.
+    Completely eliminates audio re-uploading, cloud storage polling, and heavy audio token costs.
+    """
+    system_prompt = build_system_prompt(config)
+    cached_segments = audio_base.get("transcript", [])
+    duration_str = audio_base.get("duration", "01:30")
+
+    # Format dialogue turns for fast text model reasoning
+    formatted_dialogue = []
+    for s in cached_segments:
+        spk = s.get("speaker", "Speaker")
+        ts = s.get("timestamp", "00:00")
+        txt = s.get("text", "")
+        formatted_dialogue.append(f"{spk} [{ts}]: {txt}")
+    dialogue_str = "\n".join(formatted_dialogue)
+
+    prompt = f"""
+    Evaluate the following verified call transcript against the updated configuration.
+
+    Transcript:
+    \"\"\"{dialogue_str}\"\"\"
+
+    MANDATORY RE-ANALYSIS RULES:
+    1. TONE & COMPLIANCE AUDIT:
+       Evaluate ONLY the Sales Representative's demeanor against the new criteria: "{config.toneCriteria}".
+       Cutoff Sensitivity: {config.sensitivity.upper()}.
+       Calculate real numeric scores (0-100) for repProfessionalism, repEmpathy, repPatience, and customerFrustration.
+    2. ZERO-TOLERANCE OVERRIDES:
+       Mark RED immediately if any insults, abrupt hang-ups, or forbidden phrases are uttered.
+    3. COMMITMENTS EXTRACTION (Scope: {config.actionItemScope}):
+       Extract commitments grounded strictly in the dialogue. If no calendar date was spoken, deadline must be null.
+    4. UNIVERSAL ETIQUETTE CHECKLIST:
+       Audit greetingObserved, politeLanguageObserved, professionalClosingObserved, and provide 1-3 etiquetteNotes.
+
+    Format strictly as valid JSON adhering to the required schema:
+    {{
+      "duration": "{duration_str}",
+      "tone": {{
+        "rating": "GREEN" or "RED",
+        "headline": "Short descriptive summary",
+        "explanation": "Detailed rationale referencing the updated criteria",
+        "confidenceScore": 92,
+        "sentimentBreakdown": {{
+          "repProfessionalism": 88,
+          "repEmpathy": 85,
+          "repPatience": 90,
+          "customerFrustration": 20
+        }},
+        "evidenceQuotes": [
+          {{
+            "quote": "verbatim quote from transcript",
+            "speaker": "Sales Rep",
+            "explanation": "Why this quote justifies rating",
+            "timestamp": "00:15"
+          }}
+        ]
+      }},
+      "actionItems": [
+        {{
+          "id": "act-1",
+          "task": "description",
+          "owner": "Sales Rep" or "Customer",
+          "deadline": "spoken deadline or null",
+          "evidenceQuote": "exact quote",
+          "timestamp": "00:10",
+          "seconds": 10,
+          "confidence": 90
+        }}
+      ],
+      "callMetadata": {{
+        "detectedCategory": "B2B Sales & Demo",
+        "categoryConfidence": 90,
+        "domainSummary": "Brief call summary",
+        "greetingObserved": true,
+        "politeLanguageObserved": true,
+        "professionalClosingObserved": true,
+        "etiquetteNotes": ["Courteous dialogue observed"]
+      }}
+    }}
+    """
+
+    data = None
+    engine_name = "Fast Re-Evaluation (~300ms)"
+
+    # 1. Try Groq (Ultra-fast ~300ms text completion)
+    if GROQ_KEY:
+        try:
+            from groq import Groq
+            g_client = Groq(api_key=GROQ_KEY)
+            candidate_llms = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+            for llm in candidate_llms:
+                try:
+                    resp = g_client.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt},
+                        ],
+                        model=llm,
+                        response_format={"type": "json_object"},
+                        temperature=0.2,
+                    )
+                    data = json.loads(resp.choices[0].message.content)
+                    engine_name = f"Tier-1 Groq ({llm.split('/')[-1]})"
+                    print(f"[Tier-1 Success] Fast text re-analysis completed on Groq ({llm})")
+                    break
+                except Exception:
+                    continue
+        except Exception as groq_err:
+            print(f"[Tier-1 Warning] Groq fast re-analysis failed: {groq_err}")
+
+    # 2. Try Gemini text mode if Groq did not succeed
+    if not data and GEMINI_KEY:
+        try:
+            from google import genai
+            from google.genai import types
+            gemini_client = genai.Client(api_key=GEMINI_KEY)
+            for m in ["gemini-3.5-flash", "gemini-3.1-flash-lite"]:
+                try:
+                    resp = gemini_client.models.generate_content(
+                        model=m,
+                        contents=[prompt],
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt,
+                            response_mime_type="application/json",
+                            temperature=0.2,
+                        ),
+                    )
+                    data = json.loads(resp.text)
+                    engine_name = f"Tier-1 Gemini ({m})"
+                    print(f"[Tier-1 Success] Fast text re-analysis completed on Gemini ({m})")
+                    break
+                except Exception:
+                    continue
+        except Exception as gem_err:
+            print(f"[Tier-1 Warning] Gemini fast re-analysis failed: {gem_err}")
+
+    if not data:
+        raise RuntimeError("Fast transcript re-evaluation failed on all models.")
+
+    # Guarantee preservation of verified original transcript segments and audio duration
+    data["duration"] = duration_str
+    data["transcript"] = cached_segments
+
+    # Build and sanitize report
+    report = _build_report_from_json(data, filename, file_size_str, config, engine_name=engine_name)
+    return report
+
 def _build_report_from_json(
     data: dict,
     filename: str,

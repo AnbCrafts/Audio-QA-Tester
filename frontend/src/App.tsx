@@ -34,6 +34,8 @@ export const App: React.FC = () => {
   });
 
   const [currentReport, setCurrentReport] = useState<AnalysisReport | null>(null);
+  const [activeFile, setActiveFile] = useState<File | null>(null);
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
@@ -67,6 +69,8 @@ export const App: React.FC = () => {
     BUSINESS_PRESETS.find((p) => p.id === config.presetId) || BUSINESS_PRESETS[0];
 
   const handleFileUpload = async (file: File) => {
+    setActiveFile(file);
+    setStagedFile(null);
     setIsProcessing(true);
     setErrorMessage(null);
     setCurrentReport(null);
@@ -83,15 +87,15 @@ export const App: React.FC = () => {
 
       const step1Timer = setTimeout(() => {
         setProcessingStep('Transcribing audio turns (multilingual Hindi/Hinglish/English)...');
-      }, 3000);
+      }, 2500);
 
       const step2Timer = setTimeout(() => {
         setProcessingStep('Isolating Sales Rep dialogue & scoring tone against rubric...');
-      }, 10000);
+      }, 8000);
 
       const step3Timer = setTimeout(() => {
         setProcessingStep('Extracting evidence-backed commitments & action items...');
-      }, 20000);
+      }, 16000);
 
       const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: 'POST',
@@ -126,6 +130,48 @@ export const App: React.FC = () => {
       } else {
         setErrorMessage(err.message || 'Failed to connect to backend server. Please make sure the FastAPI server is running on port 8000.');
       }
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReanalyze = async (newConfig: AnalysisConfig) => {
+    if (!activeFile) return;
+    setConfig(newConfig);
+    setIsProcessing(true);
+    setErrorMessage(null);
+    setProcessingStep('Tier-1 Cache Hit: Re-evaluating tone against updated configuration in ~350ms...');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', activeFile);
+      formData.append('config', JSON.stringify(newConfig));
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+      const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
+        method: 'POST',
+        body: formData,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const existingAudioUrl = currentReport?.audioUrl || URL.createObjectURL(activeFile);
+        setCurrentReport({
+          ...data,
+          audioUrl: existingAudioUrl,
+        });
+        setIsProcessing(false);
+      } else {
+        const errJson = await resp.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Server error (${resp.status}): Failed to re-analyze call.`);
+      }
+    } catch (err: any) {
+      console.error('Re-analysis error:', err);
+      setErrorMessage(err.message || 'Failed to re-analyze recording with updated settings.');
       setIsProcessing(false);
     }
   };
@@ -169,6 +215,8 @@ export const App: React.FC = () => {
       URL.revokeObjectURL(currentReport.audioUrl);
     }
     setCurrentReport(null);
+    setActiveFile(null);
+    setStagedFile(null);
     setErrorMessage(null);
     setSeekTime(null);
   };
@@ -198,6 +246,11 @@ export const App: React.FC = () => {
           onFileUpload={handleFileUpload}
           isProcessing={isProcessing}
           processingStep={processingStep}
+          activePreset={activePreset}
+          activeSensitivity={config.sensitivity}
+          onOpenConfig={() => setIsConfigOpen(true)}
+          stagedFile={stagedFile}
+          onStageFile={setStagedFile}
         />
 
         {/* State 1: Error Message Banner */}
@@ -299,7 +352,15 @@ export const App: React.FC = () => {
                   </>
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => setIsConfigOpen(true)}
+                  className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-white hover:from-amber-500/30 hover:to-amber-400/20 border border-amber-500/30 transition-all cursor-pointer shadow-sm"
+                  title="Test different rubrics, sensitivity, or scope without re-uploading"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                  ⚡ Re-Analyze With New Settings (~350ms)
+                </button>
                 <button
                   onClick={async () => {
                     await fetch(`${API_BASE_URL}/api/cache`, { method: 'DELETE' }).catch(() => {});
@@ -388,6 +449,8 @@ export const App: React.FC = () => {
         onClose={() => setIsConfigOpen(false)}
         config={config}
         onSaveConfig={(newConfig) => setConfig(newConfig)}
+        hasLoadedCall={!!activeFile}
+        onReanalyzeLoadedCall={handleReanalyze}
       />
 
       {/* Footer */}

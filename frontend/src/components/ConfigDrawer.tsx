@@ -8,6 +8,8 @@ interface ConfigDrawerProps {
   onClose: () => void;
   config: AnalysisConfig;
   onSaveConfig: (newConfig: AnalysisConfig) => void;
+  hasLoadedCall?: boolean;
+  onReanalyzeLoadedCall?: (newConfig: AnalysisConfig) => void;
 }
 
 export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
@@ -15,6 +17,8 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
   onClose,
   config,
   onSaveConfig,
+  hasLoadedCall = false,
+  onReanalyzeLoadedCall,
 }) => {
   const [localConfig, setLocalConfig] = useState<AnalysisConfig>(config);
   const [newPhrase, setNewPhrase] = useState('');
@@ -313,19 +317,34 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="mt-6 flex items-center justify-end gap-3 border-t border-slate-800 pt-4">
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
           <button
             onClick={onClose}
             className="rounded-lg px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
             Cancel
           </button>
-          <button
-            onClick={handleApply}
-            className="rounded-lg bg-amber-500 px-5 py-2 text-xs font-bold text-slate-950 hover:bg-amber-400 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
-          >
-            Apply Settings
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={handleApply}
+              className="rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition-all cursor-pointer"
+            >
+              Save Settings
+            </button>
+            {hasLoadedCall && onReanalyzeLoadedCall && (
+              <button
+                onClick={() => {
+                  onSaveConfig(localConfig);
+                  onReanalyzeLoadedCall(localConfig);
+                  onClose();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 px-4 py-2 text-xs font-bold text-slate-950 hover:from-amber-400 hover:to-amber-300 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                ⚡ Re-Analyze Loaded Call (~350ms)
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

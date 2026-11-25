@@ -11,8 +11,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from schemas import AnalysisConfigInput, AnalysisReport
-from audio_service import analyze_call_with_ai
-from cache_service import compute_cache_key, get_cached_report, save_cached_report
+from audio_service import analyze_call_with_ai, reanalyze_from_transcript
+from cache_service import (
+    compute_audio_hash,
+    compute_config_hash,
+    compute_cache_key,
+    get_cached_report,
+    save_cached_report,
+    get_audio_base_cache,
+    save_audio_base_cache,
+)
 
 app = FastAPI(
     title="ScaleWorks AI - Sales Call Quality Analysis Agent",
@@ -79,22 +87,51 @@ async def analyze_call(
     content = await file.read()
     file_size_mb = f"{len(content) / (1024 * 1024):.2f} MB"
 
-    # Check for response cache hit (Instant 0ms retrieval)
-    cache_key = compute_cache_key(content, config_dict)
+    audio_hash = compute_audio_hash(content)
+    config_hash = compute_config_hash(config_dict)
+    cache_key = f"{audio_hash}_{config_hash}"
+
+    # =========================================================================
+    # Tier 2 Cache Check: Full report match (Instant 0ms retrieval)
+    # =========================================================================
     cached_data = get_cached_report(cache_key)
     if cached_data and cached_data.get("transcript") and len(cached_data["transcript"]) > 0:
-        print(f"[Cache Hit] Returning cached analysis for key: {cache_key}")
+        print(f"[Tier-2 Cache Hit] Returning full cached analysis in 0ms for key: {cache_key}")
         cached_data["cached"] = True
         return AnalysisReport(**cached_data)
 
-    # Cache miss: Save uploaded file temporarily for AI processing
+    # =========================================================================
+    # Tier 1 Cache Check: Audio base transcript exists! (~300ms fast re-eval)
+    # Bypasses 25MB audio re-uploading and heavy audio token spend completely.
+    # =========================================================================
+    audio_base = get_audio_base_cache(audio_hash)
+    if audio_base and audio_base.get("transcript") and len(audio_base["transcript"]) > 0:
+        print(f"[Tier-1 Audio Cache Hit] Found existing verified transcript for audio_{audio_hash}!")
+        print(f"[Tier-1 Fast Reasoning] Re-evaluating tone against new config in ~300ms...")
+        try:
+            fast_report = await asyncio.to_thread(
+                reanalyze_from_transcript,
+                audio_base=audio_base,
+                filename=filename,
+                file_size_str=file_size_mb,
+                config=parsed_config
+            )
+            # Store in Tier-2 cache for instant 0ms hits on this specific config
+            if fast_report.transcript and len(fast_report.transcript) > 0:
+                save_cached_report(cache_key, fast_report.model_dump())
+            return fast_report
+        except Exception as tier1_err:
+            print(f"[Tier-1 Fallback] Fast re-eval hit issue ({tier1_err}), falling back to full audio pipeline...")
+
+    # =========================================================================
+    # Tier 1 Miss (Cold Run): Full Multimodal Audio Processing (~3.5s)
+    # =========================================================================
     suffix = os.path.splitext(filename)[1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
         tmp_path = tmp_file.name
         tmp_file.write(content)
 
     try:
-        # Run AI Analysis Pipeline in thread pool to prevent blocking the asyncio event loop
         report = await asyncio.to_thread(
             analyze_call_with_ai,
             file_path=tmp_path,
@@ -102,8 +139,14 @@ async def analyze_call(
             file_size_str=file_size_mb,
             config=parsed_config
         )
-        # Store successful result in cache ONLY if it produced a real transcript
         if report.transcript and len(report.transcript) > 0:
+            # 1. Save to Tier 1 Audio Base Cache (Transcript, Duration, Metadata)
+            save_audio_base_cache(audio_hash, {
+                "transcript": [seg.model_dump() for seg in report.transcript],
+                "duration": report.duration,
+                "callMetadata": report.callMetadata.model_dump() if report.callMetadata else None
+            })
+            # 2. Save to Tier 2 Config Cache
             save_cached_report(cache_key, report.model_dump())
         return report
     except Exception as e:
