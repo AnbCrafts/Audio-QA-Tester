@@ -48,6 +48,9 @@ backend/cache/
 uploads/
 backend/uploads/
 temp/
+*.db
+backend/*.db
+backend/scaleworks.db
 *.tmp
 
 # OS & Editor

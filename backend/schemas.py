@@ -39,6 +39,7 @@ class ToneAnalysisResult(BaseModel):
 
 class ActionItem(BaseModel):
     id: str
+    callId: Optional[str] = None
     task: str
     owner: str  # "Sales Rep" | "Customer" | "Unspecified"
     deadline: Optional[str] = None
@@ -46,6 +47,7 @@ class ActionItem(BaseModel):
     timestamp: Optional[str] = None
     seconds: Optional[int] = None
     confidence: int = Field(ge=0, le=100)
+    status: Optional[Literal['PENDING', 'IN_PROGRESS', 'COMPLETED']] = 'PENDING'
 
 class TranscriptSegment(BaseModel):
     id: str
@@ -80,3 +82,30 @@ class AnalysisReport(BaseModel):
     cached: Optional[bool] = False
     engineUsed: Optional[str] = "Gemini 3.5 Flash"
     errorMessage: Optional[str] = None
+
+class CallHistoryItem(BaseModel):
+    id: str
+    filename: str
+    fileSize: str
+    duration: str
+    overallScore: float
+    toneRating: Literal['GREEN', 'RED']
+    category: str
+    headline: str
+    commitmentsCount: int
+    turnsCount: int
+    createdAt: str
+
+class CommitmentStatusUpdate(BaseModel):
+    status: Literal['PENDING', 'IN_PROGRESS', 'COMPLETED']
+
+class AnalyticsOverview(BaseModel):
+    totalCalls: int
+    averageScore: float
+    redFlagCount: int
+    greenFlagCount: int
+    escalationRate: float
+    totalCommitments: int
+    completedCommitments: int
+    pendingCommitments: int
+    completionRate: float

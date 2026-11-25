@@ -35,6 +35,7 @@ export interface TranscriptSegment {
 
 export interface ActionItem {
   id: string;
+  callId?: string;
   task: string;
   owner: string; // "Sales Rep" | "Customer" | "Unspecified"
   deadline: string | null;
@@ -42,6 +43,33 @@ export interface ActionItem {
   timestamp?: string | null;
   seconds?: number | null;
   confidence: number;
+  status?: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';
+}
+
+export interface CallHistoryItem {
+  id: string;
+  filename: string;
+  fileSize: string;
+  duration: string;
+  overallScore: number;
+  toneRating: 'GREEN' | 'RED';
+  category: string;
+  headline: string;
+  commitmentsCount: number;
+  turnsCount: number;
+  createdAt: string;
+}
+
+export interface AnalyticsOverview {
+  totalCalls: number;
+  averageScore: number;
+  redFlagCount: number;
+  greenFlagCount: number;
+  escalationRate: number;
+  totalCommitments: number;
+  completedCommitments: number;
+  pendingCommitments: number;
+  completionRate: number;
 }
 
 export interface EvidenceQuote {

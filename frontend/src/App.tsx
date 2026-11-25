@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar';
+import { Navbar, AppNavTab } from './components/Navbar';
 import { UploadDropzone } from './components/UploadDropzone';
 import { ToneCard } from './components/ToneCard';
 import { ActionItemsList } from './components/ActionItemsList';
 import { TranscriptViewer } from './components/TranscriptViewer';
 import { AudioPlayerBar } from './components/AudioPlayerBar';
 import { ConfigDrawer } from './components/ConfigDrawer';
+import { CallHistoryView } from './components/CallHistoryView';
+import { CommitmentsBoard } from './components/CommitmentsBoard';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { BUSINESS_PRESETS } from './data/presets';
 import { AnalysisConfig, AnalysisReport } from './types';
 import { API_BASE_URL } from './config';
@@ -33,6 +36,7 @@ export const App: React.FC = () => {
     aiProvider: 'gemini',
   });
 
+  const [activeTab, setActiveTab] = useState<AppNavTab>('auditor');
   const [currentReport, setCurrentReport] = useState<AnalysisReport | null>(null);
   const [activeFile, setActiveFile] = useState<File | null>(null);
   const [stagedFile, setStagedFile] = useState<File | null>(null);
@@ -82,7 +86,6 @@ export const App: React.FC = () => {
       formData.append('config', JSON.stringify(config));
 
       const controller = new AbortController();
-      // Generous 5-minute timeout for multi-minute calls or high AI API load
       const timeoutId = setTimeout(() => controller.abort(), 300000);
 
       const step1Timer = setTimeout(() => {
@@ -109,15 +112,10 @@ export const App: React.FC = () => {
       clearTimeout(step3Timer);
 
       if (resp.ok) {
-        const data = await resp.json();
-        // Memory safety: free previous audio object URL before allocating a new one
-        if (currentReport?.audioUrl) {
-          URL.revokeObjectURL(currentReport.audioUrl);
-        }
-        setCurrentReport({
-          ...data,
-          audioUrl: URL.createObjectURL(file),
-        });
+        const report: AnalysisReport = await resp.json();
+        report.audioUrl = URL.createObjectURL(file);
+        report.configUsed = config;
+        setCurrentReport(report);
         setIsProcessing(false);
       } else {
         const errJson = await resp.json().catch(() => ({}));
@@ -125,45 +123,62 @@ export const App: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Analysis error:', err);
-      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
-        setErrorMessage('The analysis request timed out. Large recordings or high API server demand can cause delays. Please try again or switch to the Groq fallback engine in the settings drawer.');
-      } else {
-        setErrorMessage(err.message || 'Failed to connect to backend server. Please make sure the FastAPI server is running on port 8000.');
-      }
+      setErrorMessage(err.message || 'Failed to connect to backend analysis service.');
       setIsProcessing(false);
     }
   };
 
-  const handleReanalyze = async (newConfig: AnalysisConfig) => {
-    if (!activeFile) return;
-    setConfig(newConfig);
+  const handleSelectHistoricalCall = async (callId: string) => {
+    try {
+      setIsProcessing(true);
+      setErrorMessage(null);
+      setProcessingStep('Retrieving verified call audit from database...');
+      const res = await fetch(`${API_BASE_URL}/api/history/${callId}`);
+      if (!res.ok) throw new Error('Failed to load call audit');
+      const data: AnalysisReport = await res.json();
+      data.status = 'completed';
+      data.configUsed = config;
+      data.audioUrl = `/${data.fileName}`;
+      setCurrentReport(data);
+      setActiveTab('auditor');
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to retrieve call from database.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleReanalyze = async (newConfig?: AnalysisConfig) => {
+    if (!activeFile) {
+      setIsConfigOpen(false);
+      return;
+    }
+
+    const configToUse = newConfig || config;
     setIsProcessing(true);
     setErrorMessage(null);
-    setProcessingStep('Tier-1 Cache Hit: Re-evaluating tone against updated configuration in ~350ms...');
+    setProcessingStep('Re-analyzing cached call against updated rubric (~350ms)...');
+    setIsConfigOpen(false);
 
     try {
       const formData = new FormData();
       formData.append('file', activeFile);
-      formData.append('config', JSON.stringify(newConfig));
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      formData.append('config', JSON.stringify(configToUse));
 
       const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: 'POST',
         body: formData,
-        signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (resp.ok) {
-        const data = await resp.json();
-        const existingAudioUrl = currentReport?.audioUrl || URL.createObjectURL(activeFile);
-        setCurrentReport({
-          ...data,
-          audioUrl: existingAudioUrl,
-        });
+        const report: AnalysisReport = await resp.json();
+        if (currentReport?.audioUrl) {
+          report.audioUrl = currentReport.audioUrl;
+        } else {
+          report.audioUrl = URL.createObjectURL(activeFile);
+        }
+        report.configUsed = configToUse;
+        setCurrentReport(report);
         setIsProcessing(false);
       } else {
         const errJson = await resp.json().catch(() => ({}));
@@ -210,7 +225,6 @@ export const App: React.FC = () => {
   };
 
   const handleReset = () => {
-    // Memory safety: free audio object URL on reset
     if (currentReport?.audioUrl) {
       URL.revokeObjectURL(currentReport.audioUrl);
     }
@@ -221,7 +235,6 @@ export const App: React.FC = () => {
     setSeekTime(null);
   };
 
-  // Memory safety: free audio object URL when unmounting
   useEffect(() => {
     return () => {
       if (currentReport?.audioUrl) {
@@ -237,212 +250,132 @@ export const App: React.FC = () => {
         activePreset={activePreset}
         onOpenConfig={() => setIsConfigOpen(true)}
         isBackendConnected={isBackendConnected}
+        activeTab={activeTab}
+        onTabChange={(tab) => setActiveTab(tab)}
       />
 
-      {/* Main Container taking 90% page width */}
-      <main className="mx-auto w-[90%] flex-1 py-8 space-y-6">
-        {/* Upload Area */}
-        <UploadDropzone
-          onFileUpload={handleFileUpload}
-          isProcessing={isProcessing}
-          processingStep={processingStep}
-          activePreset={activePreset}
-          activeSensitivity={config.sensitivity}
-          onOpenConfig={() => setIsConfigOpen(true)}
-          stagedFile={stagedFile}
-          onStageFile={setStagedFile}
-        />
-
-        {/* State 1: Error Message Banner */}
-        {errorMessage && (
-          <div className="rounded-2xl border border-rose-500/30 bg-rose-950/20 p-5 backdrop-blur-sm shadow-xl flex items-start gap-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
-              <AlertTriangle className="h-5 w-5" />
-            </div>
-            <div className="flex-1">
-              <h3 className="text-sm font-bold text-rose-300">Analysis Error</h3>
-              <p className="text-xs text-rose-200/80 mt-1 leading-relaxed">
-                {errorMessage}
-              </p>
-              <div className="mt-3 flex items-center gap-3">
-                <button
-                  onClick={() => setErrorMessage(null)}
-                  className="rounded-lg bg-rose-500/20 px-3 py-1.5 text-xs font-semibold text-rose-300 hover:bg-rose-500/30 transition-colors cursor-pointer border border-rose-500/30"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* State 2: Empty / Ready State (When nothing is uploaded yet) */}
-        {!currentReport && !isProcessing && !errorMessage && (
-          <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 p-12 text-center backdrop-blur-sm">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 text-slate-400 border border-slate-800 mb-4">
-              <Headphones className="h-8 w-8 text-amber-400/80" />
-            </div>
-            <h3 className="text-base font-bold text-white">
-              No Call Recording Uploaded Yet
-            </h3>
-            <p className="text-xs text-slate-400 max-w-md mx-auto mt-1.5 leading-relaxed">
-              Upload an <strong className="text-slate-300">.m4a</strong> call recording above to run the tone quality evaluation, speaker diarization, and action item extraction.
-            </p>
-
-            {/* Feature highlights preview */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl mx-auto mt-8 text-left">
-              <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-4">
-                <div className="flex items-center gap-2 text-xs font-bold text-white mb-1">
-                  <MessagesSquare className="h-4 w-4 text-amber-400" />
-                  Speaker Diarization
-                </div>
-                <p className="text-[11px] text-slate-400 leading-normal">
-                  Automatically separates dialogue into Sales Rep and Customer turns with millisecond timestamps.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-4">
-                <div className="flex items-center gap-2 text-xs font-bold text-white mb-1">
-                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
-                  RED / GREEN Tone Rating
-                </div>
-                <p className="text-[11px] text-slate-400 leading-normal">
-                  Evaluates representative tone against your active business rubric, backed by verbatim quotes.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-800/80 bg-slate-950/40 p-4">
-                <div className="flex items-center gap-2 text-xs font-bold text-white mb-1">
-                  <CheckCircle2 className="h-4 w-4 text-indigo-400" />
-                  Commitment Extraction
-                </div>
-                <p className="text-[11px] text-slate-400 leading-normal">
-                  Identifies concrete commitments and deadlines without hallucinating unmentioned timelines.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* State 3: Active Results Dashboard (Rendered ONLY after successful upload & analysis) */}
-        {currentReport && (
+      {/* Main Container */}
+      <main className="mx-auto w-[92%] flex-1 py-7 space-y-6">
+        {/* TAB 1: LIVE AUDITOR */}
+        {activeTab === 'auditor' && (
           <div className="space-y-6">
-            {/* Top Toolbar / Reset */}
-            <div className="flex items-center justify-between pb-2">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span>Analysis for: <strong className="text-white">{currentReport.fileName}</strong></span>
-                <span>•</span>
-                <span>Uploaded {currentReport.uploadedAt}</span>
-                {currentReport.engineUsed && (
-                  <>
-                    <span>•</span>
-                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 border border-indigo-500/20">
-                      <Sparkles className="h-3 w-3 text-indigo-400" />
-                      {currentReport.engineUsed}
-                    </span>
-                  </>
-                )}
-                {currentReport.cached && (
-                  <>
-                    <span>•</span>
-                    <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300 border border-amber-500/20">
-                      <Zap className="h-3 w-3 text-amber-400" />
-                      Cached Analysis (0s)
-                    </span>
-                  </>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => setIsConfigOpen(true)}
-                  className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500/20 to-amber-400/10 px-3 py-1.5 text-xs font-semibold text-amber-300 hover:text-white hover:from-amber-500/30 hover:to-amber-400/20 border border-amber-500/30 transition-all cursor-pointer shadow-sm"
-                  title="Test different rubrics, sensitivity, or scope without re-uploading"
-                >
-                  <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                  ⚡ Re-Analyze With New Settings (~350ms)
-                </button>
-                <button
-                  onClick={async () => {
-                    await fetch(`${API_BASE_URL}/api/cache`, { method: 'DELETE' }).catch(() => {});
-                    handleReset();
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-amber-400 hover:text-amber-300 hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
-                  title="Clear server cache to re-run fresh analysis"
-                >
-                  <Zap className="h-3.5 w-3.5 text-amber-400" />
-                  Clear Cache
-                </button>
-                <button
-                  onClick={handleReset}
-                  className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Upload Another Call
-                </button>
-              </div>
-            </div>
-
-            {/* Audio Player Bar */}
-            <AudioPlayerBar
-              fileName={currentReport.fileName}
-              fileSize={currentReport.fileSize}
-              durationStr={currentReport.duration}
-              audioUrl={currentReport.audioUrl}
-              seekTime={seekTime}
+            {/* Upload Area */}
+            <UploadDropzone
+              onFileUpload={handleFileUpload}
+              isProcessing={isProcessing}
+              processingStep={processingStep}
+              activePreset={activePreset}
+              activeSensitivity={config.sensitivity}
+              onOpenConfig={() => setIsConfigOpen(true)}
+              stagedFile={stagedFile}
+              onStageFile={(f) => setStagedFile(f)}
             />
 
-            {/* Tone Evaluation Card */}
-            <ToneCard
-              tone={currentReport.tone}
-              callMetadata={currentReport.callMetadata}
-              onJumpToTimestamp={handleJumpToTimestamp}
-            />
-
-            {/* Dual Column Layout: Commitments & Action Items + Diarized Transcript */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left Column: Action Items (5 cols) */}
-              <div className="lg:col-span-5 space-y-6">
-                <ActionItemsList
-                  actionItems={currentReport.actionItems}
-                  onSeekTimestamp={handleJumpToTimestamp}
-                />
-
-                {/* Assessment Scoring Overview Card */}
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 text-xs">
-                  <h4 className="font-bold text-white uppercase tracking-wider text-[11px] flex items-center gap-2 mb-3">
-                    <CheckCircle2 className="h-4 w-4 text-amber-400" />
-                    ScaleWorks AI Evaluation Criteria
-                  </h4>
-                  <div className="space-y-2.5 text-slate-400">
-                    <div className="flex items-start justify-between border-b border-slate-800 pb-2">
-                      <span><strong>40% Accuracy & Reliability:</strong> Evidence quotes cited directly from transcript; no hallucinations.</span>
-                      <span className="font-mono text-emerald-400 font-bold ml-2">Verified</span>
-                    </div>
-                    <div className="flex items-start justify-between border-b border-slate-800 pb-2">
-                      <span><strong>30% User Experience:</strong> Direct audio player, speaker diarization, clear RED/GREEN visual hierarchy.</span>
-                      <span className="font-mono text-emerald-400 font-bold ml-2">Active</span>
-                    </div>
-                    <div className="flex items-start justify-between">
-                      <span><strong>30% Configurability:</strong> Preset switching for multiple business types, custom rubrics & sensitivity sliders.</span>
-                      <span className="font-mono text-amber-400 font-bold ml-2">Customizable</span>
-                    </div>
+            {/* Error Message */}
+            {errorMessage && (
+              <div className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-4 text-xs text-rose-300 flex items-start gap-3 shadow-lg shadow-rose-950/30">
+                <AlertTriangle className="h-4 w-4 text-rose-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <strong className="font-bold text-rose-200">Analysis Pipeline Issue:</strong> {errorMessage}
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      onClick={() => activeFile && handleFileUpload(activeFile)}
+                      className="rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 px-3 py-1 text-xs font-semibold transition-all border border-rose-500/30 cursor-pointer"
+                    >
+                      Retry Analysis
+                    </button>
+                    <button
+                      onClick={() => setErrorMessage(null)}
+                      className="text-slate-400 hover:text-slate-200 text-xs cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
                   </div>
                 </div>
               </div>
+            )}
 
-              {/* Right Column: Diarized Transcript Viewer (7 cols) */}
-              <div className="lg:col-span-7">
-                <TranscriptViewer
-                  transcript={currentReport.transcript}
-                  onSeekAudio={(sec) => setSeekTime(sec)}
-                  onUpdateSegment={handleUpdateTranscriptSegment}
-                  evidenceQuotes={currentReport.tone.evidenceQuotes}
-                  actionItems={currentReport.actionItems}
-                  toneRating={currentReport.tone.rating}
+            {/* Analysis Results Display */}
+            {currentReport && (
+              <div className="space-y-6">
+                {/* Audio Waveform Player Bar */}
+                <AudioPlayerBar
+                  audioUrl={currentReport.audioUrl || null}
+                  fileName={currentReport.fileName}
+                  fileSize={currentReport.fileSize}
+                  durationStr={currentReport.duration}
+                  seekTime={seekTime}
                 />
+
+                {/* Demeanor & Tone Evaluation Card */}
+                <ToneCard
+                  tone={currentReport.tone}
+                  callMetadata={currentReport.callMetadata}
+                  onJumpToTimestamp={(ts) => handleJumpToTimestamp(ts)}
+                />
+
+                {/* Dual Column Layout: Commitments + Diarized Transcript */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Left Column: Action Items (5 cols) */}
+                  <div className="lg:col-span-5 space-y-6">
+                    <ActionItemsList
+                      actionItems={currentReport.actionItems}
+                      onSeekTimestamp={handleJumpToTimestamp}
+                    />
+
+                    {/* Assessment Scoring Overview Card */}
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 text-xs">
+                      <h4 className="font-bold text-white uppercase tracking-wider text-[11px] flex items-center gap-2 mb-3">
+                        <CheckCircle2 className="h-4 w-4 text-amber-400" />
+                        ScaleWorks AI Evaluation Criteria
+                      </h4>
+                      <div className="space-y-2.5 text-slate-400">
+                        <div className="flex items-start justify-between border-b border-slate-800 pb-2">
+                          <span><strong>40% Accuracy &amp; Reliability:</strong> Evidence quotes cited directly from transcript; no hallucinations.</span>
+                          <span className="font-mono text-emerald-400 font-bold ml-2">Verified</span>
+                        </div>
+                        <div className="flex items-start justify-between border-b border-slate-800 pb-2">
+                          <span><strong>30% User Experience:</strong> Direct audio player, speaker diarization, clear RED/GREEN visual hierarchy.</span>
+                          <span className="font-mono text-emerald-400 font-bold ml-2">Active</span>
+                        </div>
+                        <div className="flex items-start justify-between">
+                          <span><strong>30% Configurability:</strong> Preset switching for multiple business types, custom rubrics &amp; sensitivity sliders.</span>
+                          <span className="font-mono text-amber-400 font-bold ml-2">Customizable</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Diarized Transcript Viewer (7 cols) */}
+                  <div className="lg:col-span-7">
+                    <TranscriptViewer
+                      transcript={currentReport.transcript}
+                      onSeekAudio={(sec) => setSeekTime(sec)}
+                      onUpdateSegment={handleUpdateTranscriptSegment}
+                      evidenceQuotes={currentReport.tone.evidenceQuotes}
+                      actionItems={currentReport.actionItems}
+                      toneRating={currentReport.tone.rating}
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
+        )}
+
+        {/* TAB 2: CALL HISTORY */}
+        {activeTab === 'history' && (
+          <CallHistoryView onSelectCall={handleSelectHistoricalCall} />
+        )}
+
+        {/* TAB 3: COMMITMENTS BOARD */}
+        {activeTab === 'commitments' && (
+          <CommitmentsBoard />
+        )}
+
+        {/* TAB 4: ANALYTICS DASHBOARD */}
+        {activeTab === 'analytics' && (
+          <AnalyticsDashboard />
         )}
       </main>
 
@@ -458,7 +391,7 @@ export const App: React.FC = () => {
 
       {/* Footer */}
       <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-500">
-        ScaleWorks AI Engineering Assessment • Forward Deployed Engineer • Built with React & FastAPI
+        ScaleWorks AI Engineering Assessment &bull; Forward Deployed Engineer &bull; Enterprise Call Intelligence
       </footer>
     </div>
   );

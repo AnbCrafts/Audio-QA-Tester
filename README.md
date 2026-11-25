@@ -10,8 +10,19 @@ An intelligent, multi-business web application that processes `.m4a` sales call 
 | Evaluation Area | Weight | Implementation Details |
 | :--- | :---: | :--- |
 | **Accuracy & Reliability** | **40%** | • **Isolated Representative Scoring**: Customer emotion is separated so representative is never unfairly penalized.<br>• **Evidence Grounding**: Every RED/GREEN verdict cites direct quotes with timestamps from the transcript.<br>• **Hallucination Prevention**: Commitments only include explicit promises; unstated deadlines remain `null` rather than fabricated.<br>• **Dual-Engine Resilience**: Primary multimodal processing via Gemini with automatic fallback to Groq (Llama-3.3) for rate-limit resilience. |
-| **User Experience (UX)** | **30%** | • **Interactive Call Player**: Synced audio scrubber with playback speed controls (1x, 1.25x, 1.5x, 2x).<br>• **Clear Visual Hierarchy**: High-contrast RED / GREEN pill badges and multi-dimensional sentiment meters.<br>• **Searchable Transcript**: Filter dialogue by Sales Rep vs Customer or jump directly to timestamps.<br>• **Zero-Friction Quick Demos**: Built-in 1-click test cases for both compliant (GREEN) and violation (RED) calls. |
-| **Configurability** | **30%** | • **Multi-Business Presets**: Switch instantly between *B2B SaaS Sales*, *Financial Recovery / Debt Collection*, *Real Estate & Advisory*, and *Custom Rubric* without changing code.<br>• **Sensitivity Slider**: Choose between `Low`, `Balanced`, and `Strict` flag thresholds.<br>• **Action Item Scope**: Configurable from strict time-bound commitments to broad next steps.<br>• **Custom Monitored Terms**: Define organization-specific forbidden phrases and compliance triggers. |
+| **User Experience (UX)** | **30%** | • **Interactive Call Player**: Synced audio scrubber with playback speed controls (1x, 1.25x, 1.5x, 2x).<br>• **Clear Visual Hierarchy**: High-contrast RED / GREEN pill badges and multi-dimensional sentiment meters.<br>• **Historical Call Explorer**: Searchable database of all past audited calls with 1-click reload.<br>• **Commitment Lifecycle Board**: Interactive status tracking (`PENDING` ➔ `COMPLETED`) with CSV export.<br>• **Team Analytics**: Aggregated quality scores, escalation rates, and coaching insights. |
+| **Configurability** | **30%** | • **Multi-Business Presets**: Switch instantly between *B2B SaaS Sales*, *Financial Recovery / Debt Collection*, *Real Estate & Advisory*, and *Custom Rubric* without changing code.<br>• **Sensitivity Slider**: Choose between `Low`, `Balanced`, and `Strict` flag thresholds.<br>• **Action Item Scope**: Configurable from strict time-bound commitments to broad next steps.<br>• **Zero-Reupload Fast Re-Analysis**: Re-evaluates cached calls against updated rubrics in ~350ms. |
+
+---
+
+## 🗄️ Database & Persistence Layer
+
+The platform includes a production **SQLAlchemy ORM layer**:
+* **Default Setup (Zero Config):** Automatically creates a local SQLite database (`scaleworks.db`) with relational models for `CallAuditModel`, `TranscriptSegmentModel`, and `CommitmentModel`.
+* **PostgreSQL / Cloud DB Ready:** To connect to Supabase, Neon, or AWS RDS, simply set `DATABASE_URL` in `backend/.env`:
+  ```env
+  DATABASE_URL=postgresql://user:password@host:5432/dbname
+  ```
 
 ---
 
