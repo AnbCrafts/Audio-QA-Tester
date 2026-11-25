@@ -436,6 +436,9 @@ export const App: React.FC = () => {
                   transcript={currentReport.transcript}
                   onSeekAudio={(sec) => setSeekTime(sec)}
                   onUpdateSegment={handleUpdateTranscriptSegment}
+                  evidenceQuotes={currentReport.tone.evidenceQuotes}
+                  actionItems={currentReport.actionItems}
+                  toneRating={currentReport.tone.rating}
                 />
               </div>
             </div>

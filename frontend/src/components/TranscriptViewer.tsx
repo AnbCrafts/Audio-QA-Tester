@@ -23,6 +23,9 @@ interface TranscriptViewerProps {
   onSeekAudio?: (seconds: number) => void;
   activeSegmentId?: string | null;
   onUpdateSegment?: (id: string, newText: string, newSpeaker: string) => void;
+  evidenceQuotes?: Array<{ quote: string; timestamp?: string }>;
+  actionItems?: Array<{ evidenceQuote: string; timestamp?: string | null }>;
+  toneRating?: 'GREEN' | 'RED';
 }
 
 export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
@@ -30,6 +33,9 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
   onSeekAudio,
   activeSegmentId,
   onUpdateSegment,
+  evidenceQuotes = [],
+  actionItems = [],
+  toneRating = 'GREEN',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSpeaker, setFilterSpeaker] = useState<'all' | 'rep' | 'customer'>('all');
@@ -285,12 +291,66 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                       {seg.speaker}
                     </span>
 
-                    {/* Key moment marker */}
-                    {seg.isFlaggedEvidence && (
-                      <span className="flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
-                        <Sparkles className="h-3 w-3" /> Key Moment / Action
-                      </span>
-                    )}
+                    {/* Key moment marker: Distinguish Tone Evidence vs Action Commitment */}
+                    {(() => {
+                      const isToneEvidence = evidenceQuotes?.some(
+                        (eq) =>
+                          (eq.timestamp && eq.timestamp === seg.timestamp) ||
+                          (eq.quote && seg.text.toLowerCase().includes(eq.quote.toLowerCase().slice(0, 20)))
+                      );
+                      const isActionItem = actionItems?.some(
+                        (act) =>
+                          (act.timestamp && act.timestamp === seg.timestamp) ||
+                          (act.evidenceQuote && seg.text.toLowerCase().includes(act.evidenceQuote.toLowerCase().slice(0, 20)))
+                      );
+
+                      if (isToneEvidence && isActionItem) {
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            <span className={`inline-flex items-center gap-1 rounded text-[10px] font-bold px-1.5 py-0.5 border ${
+                              toneRating === 'RED'
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            }`}>
+                              <Sparkles className="h-3 w-3" /> Tone Evidence
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
+                              📋 Action Commitment
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      if (isToneEvidence) {
+                        return (
+                          <span className={`inline-flex items-center gap-1 rounded text-[10px] font-bold px-1.5 py-0.5 border ${
+                            toneRating === 'RED'
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          }`}>
+                            <Sparkles className="h-3 w-3" /> Tone Evidence Quote
+                          </span>
+                        );
+                      }
+
+                      if (isActionItem) {
+                        return (
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
+                            📋 Action Commitment
+                          </span>
+                        );
+                      }
+
+                      if (seg.isFlaggedEvidence) {
+                        return (
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
+                            <Sparkles className="h-3 w-3" /> Key Moment
+                          </span>
+                        );
+                      }
+
+                      return null;
+                    })()}
                   </div>
 
                   <div className="flex items-center gap-2">
