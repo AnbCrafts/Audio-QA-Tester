@@ -27,7 +27,7 @@ from schemas import (
 )
 import main
 from database import SessionLocal
-from models import AudioAssetModel, UploadSessionModel
+from models import AudioAssetModel, UploadSessionModel, OrganizationModel, UserModel
 
 
 def _create_synthetic_m4a(path: str, duration_sec: int = 8) -> None:
@@ -173,9 +173,25 @@ def test_chunked_upload_dedupe_magic_reject_and_range_stream(monkeypatch):
     tmp_dir = tempfile.mkdtemp(prefix="qa_upload_test_")
     created_asset_id = None
     created_upload_ids = []
+    created_org_id = None
+    created_user_id = None
     client = TestClient(main.app)
 
     try:
+        reg_email = f"uploadtest_{uuid.uuid4().hex[:8]}@example.com"
+        r_reg = client.post(
+            "/api/auth/register",
+            json={
+                "email": reg_email,
+                "password": "testpassword123",
+                "fullName": "Upload Tester",
+                "workspaceName": "Upload Test Org",
+            },
+        )
+        assert r_reg.status_code == 200
+        created_org_id = r_reg.json()["orgId"]
+        created_user_id = r_reg.json()["userId"]
+
         audio_path = os.path.join(tmp_dir, "synthetic.m4a")
         _create_synthetic_m4a(audio_path, duration_sec=4)
         with open(audio_path, "rb") as f:
@@ -255,6 +271,10 @@ def test_chunked_upload_dedupe_magic_reject_and_range_stream(monkeypatch):
                 if asset:
                     storage_provider.delete_asset(asset.storage_key)
                     db.delete(asset)
+            if created_user_id:
+                db.query(UserModel).filter(UserModel.id == created_user_id).delete()
+            if created_org_id:
+                db.query(OrganizationModel).filter(OrganizationModel.id == created_org_id).delete()
             db.commit()
         finally:
             db.close()

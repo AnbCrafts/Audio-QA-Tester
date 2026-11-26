@@ -22,47 +22,66 @@ interface CallHistoryViewProps {
 
 export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }) => {
   const [history, setHistory] = useState<CallHistoryItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [toneFilter, setToneFilter] = useState<'ALL' | 'GREEN' | 'RED'>('ALL');
   const [error, setError] = useState<string | null>(null);
 
-  const fetchHistory = async () => {
-    setIsLoading(true);
+  const fetchHistory = async (cursorToLoad: string | null = null) => {
+    if (cursorToLoad) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+    }
     setError(null);
     try {
-      let url = `${API_BASE_URL}/api/history?limit=100`;
+      let url = `${API_BASE_URL}/api/history?limit=25`;
       if (toneFilter !== 'ALL') url += `&tone=${toneFilter}`;
       if (searchTerm.trim()) url += `&search=${encodeURIComponent(searchTerm.trim())}`;
+      if (cursorToLoad) url += `&cursor=${encodeURIComponent(cursorToLoad)}`;
 
-      const res = await fetch(url);
+      const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to fetch call history');
       const data = await res.json();
-      setHistory(data);
+      const items: CallHistoryItem[] = Array.isArray(data) ? data : data.items || [];
+      setHistory((prev) => (cursorToLoad ? [...prev, ...items] : items));
+      setNextCursor(data.nextCursor || null);
+      setHasMore(Boolean(data.hasMore));
     } catch (err: any) {
       setError(err.message || 'Could not load history');
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    fetchHistory();
+    fetchHistory(null);
   }, [toneFilter]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchHistory();
+    fetchHistory(null);
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm('Delete this historical audit from database?')) return;
     try {
-      await fetch(`${API_BASE_URL}/api/history/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/history/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Delete failed');
+      }
       setHistory((prev) => prev.filter((item) => item.id !== id));
-    } catch (err) {
-      alert('Failed to delete call record.');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete call record.');
     }
   };
 
@@ -126,7 +145,7 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
 
           <button
             type="button"
-            onClick={fetchHistory}
+            onClick={() => fetchHistory(null)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-amber-400 transition-all"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -245,6 +264,18 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
                 })}
               </tbody>
             </table>
+            {hasMore && nextCursor && (
+              <div className="border-t border-slate-800 p-4 text-center">
+                <button
+                  type="button"
+                  disabled={isLoadingMore}
+                  onClick={() => fetchHistory(nextCursor)}
+                  className="rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-bold text-amber-300 hover:bg-slate-700 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {isLoadingMore ? 'Loading more calls...' : 'Load More Calls'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

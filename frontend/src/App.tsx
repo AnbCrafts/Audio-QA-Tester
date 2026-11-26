@@ -9,9 +9,10 @@ import { ConfigDrawer } from './components/ConfigDrawer';
 import { CallHistoryView } from './components/CallHistoryView';
 import { CommitmentsBoard } from './components/CommitmentsBoard';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { AuthModal } from './components/AuthModal';
 import { BUSINESS_PRESETS } from './data/presets';
-import { AnalysisConfig, AnalysisReport, JobProgressEvent } from './types';
-import { API_BASE_URL } from './config';
+import { AnalysisConfig, AnalysisReport, JobProgressEvent, OrgTokenQuota, UserProfile } from './types';
+import { API_BASE_URL, generateIdempotencyKey } from './config';
 import { uploadFileInChunks } from './utils/uploadClient';
 import {
   CheckCircle2,
@@ -48,7 +49,50 @@ export const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [seekTime, setSeekTime] = useState<number | null>(null);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [tokenQuota, setTokenQuota] = useState<OrgTokenQuota | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  const fetchTokenQuota = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/org/token-quota`, { credentials: 'include' });
+      if (res.ok) {
+        setTokenQuota(await res.json());
+      }
+    } catch {
+      // ignore transient quota refresh failure
+    }
+  };
+
+  // Check backend health and current auth session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/auth/me`, { credentials: 'include' });
+        if (res.ok) {
+          const user = await res.json();
+          setCurrentUser(user);
+          fetchTokenQuota();
+        } else {
+          setCurrentUser(null);
+        }
+      } catch {
+        setCurrentUser(null);
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+    checkSession();
+  }, []);
+
+  const handleLogout = async () => {
+    await fetch(`${API_BASE_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    closeActiveEventSource();
+    setCurrentUser(null);
+    setTokenQuota(null);
+    setCurrentReport(null);
+  };
 
   // Check backend health on mount
   useEffect(() => {
@@ -94,7 +138,7 @@ export const App: React.FC = () => {
     configToUse: AnalysisConfig
   ) => {
     closeActiveEventSource();
-    const es = new EventSource(`${API_BASE_URL}/api/jobs/${jobId}/events`);
+    const es = new EventSource(`${API_BASE_URL}/api/jobs/${jobId}/events`, { withCredentials: true });
     eventSourceRef.current = es;
 
     es.onmessage = (event) => {
@@ -114,10 +158,12 @@ export const App: React.FC = () => {
           setCurrentReport(report);
           setProgressPct(100);
           setIsProcessing(false);
+          fetchTokenQuota();
         } else if (data.status === 'FAILED') {
           closeActiveEventSource();
           setErrorMessage(data.errorMessage || 'Analysis job failed.');
           setIsProcessing(false);
+          fetchTokenQuota();
         }
       } catch (parseErr) {
         console.error('Failed to parse SSE event:', parseErr);
@@ -127,7 +173,7 @@ export const App: React.FC = () => {
     es.onerror = async () => {
       closeActiveEventSource();
       try {
-        const pollRes = await fetch(`${API_BASE_URL}/api/jobs/${jobId}`);
+        const pollRes = await fetch(`${API_BASE_URL}/api/jobs/${jobId}`, { credentials: 'include' });
         if (pollRes.ok) {
           const pollData: JobProgressEvent = await pollRes.json();
           if (pollData.status === 'COMPLETED' && pollData.report) {
@@ -138,6 +184,7 @@ export const App: React.FC = () => {
             };
             setCurrentReport(report);
             setIsProcessing(false);
+            fetchTokenQuota();
             return;
           }
           if (pollData.status === 'FAILED') {
@@ -175,7 +222,11 @@ export const App: React.FC = () => {
 
       const resp = await fetch(`${API_BASE_URL}/api/analyze/async`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': generateIdempotencyKey(),
+        },
         body: JSON.stringify({
           assetId: uploadResult.assetId,
           config,
@@ -184,6 +235,9 @@ export const App: React.FC = () => {
 
       if (!resp.ok) {
         const errJson = await resp.json().catch(() => ({}));
+        if (resp.status === 429 && errJson.code === 'DAILY_QUOTA_EXCEEDED') {
+          fetchTokenQuota();
+        }
         throw new Error(errJson.detail || `Server error (${resp.status}): Failed to queue analysis.`);
       }
 
@@ -203,7 +257,7 @@ export const App: React.FC = () => {
       setProgressPct(50);
       setErrorMessage(null);
       setProcessingStep('Retrieving verified call audit from database...');
-      const res = await fetch(`${API_BASE_URL}/api/history/${callId}`);
+      const res = await fetch(`${API_BASE_URL}/api/history/${callId}`, { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to load call audit');
       const data: AnalysisReport = await res.json();
       data.status = 'completed';
@@ -243,7 +297,11 @@ export const App: React.FC = () => {
     try {
       const resp = await fetch(`${API_BASE_URL}/api/analyze/async`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': generateIdempotencyKey(),
+        },
         body: JSON.stringify({
           assetId: existingAssetId,
           config: configToUse,
@@ -252,6 +310,9 @@ export const App: React.FC = () => {
 
       if (!resp.ok) {
         const errJson = await resp.json().catch(() => ({}));
+        if (resp.status === 429 && errJson.code === 'DAILY_QUOTA_EXCEEDED') {
+          fetchTokenQuota();
+        }
         throw new Error(errJson.detail || `Server error (${resp.status}): Failed to re-analyze call.`);
       }
 
@@ -322,6 +383,15 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
+      {authChecked && !currentUser && (
+        <AuthModal
+          onAuthenticated={(user) => {
+            setCurrentUser(user);
+            fetchTokenQuota();
+          }}
+        />
+      )}
+
       {/* Top Navigation */}
       <Navbar
         activePreset={activePreset}
@@ -329,10 +399,31 @@ export const App: React.FC = () => {
         isBackendConnected={isBackendConnected}
         activeTab={activeTab}
         onTabChange={(tab) => setActiveTab(tab)}
+        user={currentUser}
+        tokenQuota={tokenQuota}
+        onLogout={handleLogout}
       />
 
       {/* Main Container */}
       <main className="mx-auto w-[92%] flex-1 py-7 space-y-6">
+        {tokenQuota?.isExhausted && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-4 text-xs text-rose-200 flex items-center justify-between gap-4">
+            <div>
+              <strong className="text-rose-300">Daily Token Quota Exhausted:</strong>{' '}
+              {tokenQuota.usedToday.toLocaleString()} / {tokenQuota.dailyLimit.toLocaleString()} tokens used today.
+              Your workspace quota automatically renews tomorrow at{' '}
+              <strong>{new Date(tokenQuota.renewsAtUtc).toLocaleString()}</strong>.
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('analytics')}
+              className="shrink-0 rounded-lg border border-rose-400/40 bg-rose-500/20 px-3 py-1.5 font-bold text-rose-100 hover:bg-rose-500/30 cursor-pointer"
+            >
+              View Usage
+            </button>
+          </div>
+        )}
+
         {/* TAB 1: LIVE AUDITOR */}
         {activeTab === 'auditor' && (
           <div className="space-y-6">

@@ -10,20 +10,29 @@ import {
   ShieldCheck,
   CheckSquare,
   RefreshCw,
+  Coins,
+  Cpu,
 } from 'lucide-react';
-import { AnalyticsOverview } from '../types';
+import { AnalyticsOverview, OrgTokenQuota } from '../types';
+import { API_BASE_URL } from '../config';
 
 export const AnalyticsDashboard: React.FC = () => {
   const [data, setData] = useState<AnalyticsOverview | null>(null);
+  const [tokenQuota, setTokenQuota] = useState<OrgTokenQuota | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchAnalytics = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/analytics/overview');
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+      const [overviewRes, quotaRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/analytics/overview`, { credentials: 'include' }),
+        fetch(`${API_BASE_URL}/api/org/token-quota`, { credentials: 'include' }),
+      ]);
+      if (overviewRes.ok) {
+        setData(await overviewRes.json());
+      }
+      if (quotaRes.ok) {
+        setTokenQuota(await quotaRes.json());
       }
     } catch (err) {
       console.error('Failed to fetch analytics:', err);
@@ -132,6 +141,83 @@ export const AnalyticsDashboard: React.FC = () => {
               </p>
             </div>
           </div>
+
+          {/* Tenant Daily Token Quota & Next-Day Renewal Card */}
+          {tokenQuota && (
+            <div
+              className={`rounded-xl border p-5 backdrop-blur-sm ${
+                tokenQuota.isExhausted
+                  ? 'border-rose-500/40 bg-rose-950/20'
+                  : 'border-slate-800 bg-slate-900/60'
+              }`}
+            >
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                    <Coins className="h-4 w-4 text-amber-400" />
+                    Tenant Daily AI Token Quota — <span className="text-amber-300">{tokenQuota.orgName}</span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Resets automatically every day at 00:00 UTC (Next renewal:{' '}
+                    <span className="text-slate-200 font-semibold">
+                      {new Date(tokenQuota.renewsAtUtc).toLocaleString()}
+                    </span>
+                    )
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4 text-xs font-mono">
+                  <div className="text-right">
+                    <div className="text-slate-400 text-[10px] uppercase">Today Usage</div>
+                    <div className="font-bold text-white">
+                      {tokenQuota.usedToday.toLocaleString()} / {tokenQuota.dailyLimit.toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-slate-400 text-[10px] uppercase">All-Time Spend</div>
+                    <div className="font-bold text-emerald-400">
+                      ${tokenQuota.totalCostUsdAllTime.toFixed(4)} ({tokenQuota.totalTokensAllTime.toLocaleString()} tok)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-2.5 w-full rounded-full bg-slate-800 overflow-hidden mb-3">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    tokenQuota.isExhausted
+                      ? 'bg-rose-500'
+                      : tokenQuota.usagePct >= 80
+                      ? 'bg-amber-400'
+                      : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(2, tokenQuota.usagePct))}%` }}
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className={tokenQuota.isExhausted ? 'text-rose-300 font-semibold' : 'text-slate-300'}>
+                  {tokenQuota.isExhausted
+                    ? `Daily quota exhausted. New analyses pause until renewal at ${new Date(tokenQuota.renewsAtUtc).toLocaleTimeString()}.`
+                    : `${tokenQuota.remainingToday.toLocaleString()} tokens remaining today (${(100 - tokenQuota.usagePct).toFixed(1)}% left)`}
+                </span>
+
+                {tokenQuota.byModel.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {tokenQuota.byModel.map((m) => (
+                      <span
+                        key={`${m.provider}-${m.model}`}
+                        className="inline-flex items-center gap-1 rounded-md bg-slate-950/80 border border-slate-800 px-2 py-0.5 text-[10px] font-mono text-slate-300"
+                      >
+                        <Cpu className="h-3 w-3 text-amber-400" />
+                        {m.model}: {m.totalTokens.toLocaleString()} (${m.costUsd.toFixed(4)})
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Detailed Analytical Breakdown */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

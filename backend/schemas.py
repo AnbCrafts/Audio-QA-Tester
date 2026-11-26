@@ -7,13 +7,14 @@ BusinessPresetId = Literal['saas_sales', 'debt_collection', 'real_estate', 'cust
  
 class AnalysisConfigInput(BaseModel):
     presetId: BusinessPresetId = 'saas_sales'
-    presetName: str = 'B2B SaaS Sales'
+    presetName: str = Field(default='B2B SaaS Sales', max_length=120)
     sensitivity: SensitivityLevel = 'balanced'
     toneCriteria: str = Field(
-        default="Representative must maintain active listening, consultative empathy, and respect during pricing or technical objections."
+        default="Representative must maintain active listening, consultative empathy, and respect during pricing or technical objections.",
+        max_length=1500,
     )
     actionItemScope: ActionItemScope = 'explicit_commitments'
-    customForbiddenPhrases: List[str] = Field(default_factory=list)
+    customForbiddenPhrases: List[str] = Field(default_factory=list, max_length=50)
     repSpeakerId: Literal['auto', 'Speaker 0', 'Speaker 1'] = 'auto'
     aiProvider: Literal['gemini', 'groq'] = 'gemini'
 
@@ -162,3 +163,63 @@ class AnalyticsOverview(BaseModel):
     completedCommitments: int
     pendingCommitments: int
     completionRate: float
+
+
+class PaginatedHistoryResponse(BaseModel):
+    items: List[CallHistoryItem]
+    nextCursor: Optional[str] = None
+    hasMore: bool = False
+
+
+class PaginatedCommitmentsResponse(BaseModel):
+    items: List[dict]
+    nextCursor: Optional[str] = None
+    hasMore: bool = False
+
+
+class ModelUsageBreakdown(BaseModel):
+    model: str
+    provider: str
+    requests: int
+    totalTokens: int
+    costUsd: float
+
+
+class OrgTokenQuotaResponse(BaseModel):
+    orgId: str
+    orgName: str
+    usedToday: int
+    dailyLimit: int
+    remainingToday: int
+    usagePct: float
+    isExhausted: bool
+    renewsAtUtc: str
+    retryAfterSeconds: int
+    totalTokensAllTime: int
+    totalCostUsdAllTime: float
+    byModel: List[ModelUsageBreakdown] = Field(default_factory=list)
+
+
+class UpdateOrgQuotaRequest(BaseModel):
+    dailyLimit: int = Field(ge=1000, le=100_000_000)
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=6, max_length=128)
+    fullName: str = Field(default="", max_length=120)
+    workspaceName: str = Field(min_length=2, max_length=120)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserProfileResponse(BaseModel):
+    userId: str
+    email: str
+    fullName: str
+    orgId: str
+    orgName: str
+    role: Literal['ADMIN', 'MEMBER']

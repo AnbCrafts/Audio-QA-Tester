@@ -1,7 +1,8 @@
 import os
 import shutil
 import asyncio
-from typing import Dict, Any, List
+from datetime import timedelta
+from typing import Dict, Any, List, Optional
 from database import SessionLocal
 from models import (
     AnalysisJobModel,
@@ -10,9 +11,11 @@ from models import (
     CallAuditModel,
     TranscriptSegmentModel,
     CommitmentModel,
+    utcnow_naive,
 )
 from schemas import AnalysisConfigInput, AnalysisReport
 from storage_service import storage_provider, TMP_CHUNKS_DIR
+from traffic_guard import analytics_single_flight
 from audio_chunker import (
     CHUNKING_THRESHOLD_SECONDS,
     AudioChunkSpec,
@@ -35,6 +38,16 @@ from cache_service import (
     get_audio_base_cache,
     save_audio_base_cache,
 )
+
+MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "4")))
+_JOB_SEMAPHORE: Optional[asyncio.Semaphore] = None
+
+
+def _get_job_semaphore() -> asyncio.Semaphore:
+    global _JOB_SEMAPHORE
+    if _JOB_SEMAPHORE is None:
+        _JOB_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+    return _JOB_SEMAPHORE
 
 
 def _update_job(
@@ -75,10 +88,33 @@ def _update_job(
         db.close()
 
 
-def persist_report_to_db(report: AnalysisReport, audio_hash: str, asset_id: str = None) -> str:
-    """Persists an AnalysisReport and links it to its persistent AudioAsset."""
+def persist_report_to_db(
+    report: AnalysisReport,
+    audio_hash: str,
+    asset_id: Optional[str] = None,
+    org_id: str = "default-org",
+    cache_key: Optional[str] = None,
+) -> str:
+    """
+    Persists an AnalysisReport with denormalized turns_count & commitments_count.
+    Deduplicates on (org_id, cache_key) so Tier-2 cache hits never inflate Call History/Analytics.
+    """
+    org = org_id or "default-org"
     db = SessionLocal()
     try:
+        if cache_key:
+            existing = (
+                db.query(CallAuditModel)
+                .filter(CallAuditModel.org_id == org, CallAuditModel.cache_key == cache_key)
+                .first()
+            )
+            if existing:
+                report.callId = existing.id
+                report.assetId = existing.asset_id or asset_id
+                if report.assetId:
+                    report.audioUrl = f"/api/assets/{report.assetId}/stream"
+                return existing.id
+
         raw_score = 4.5
         if report.tone.rating == "RED":
             raw_score = 2.4
@@ -89,6 +125,7 @@ def persist_report_to_db(report: AnalysisReport, audio_hash: str, asset_id: str 
 
         meta = report.callMetadata
         audit = CallAuditModel(
+            org_id=org,
             filename=report.fileName,
             file_size=report.fileSize,
             duration=report.duration,
@@ -107,6 +144,9 @@ def persist_report_to_db(report: AnalysisReport, audio_hash: str, asset_id: str 
             etiquette_notes=(meta.etiquetteNotes or []) if meta else [],
             evidence_quotes=[eq.model_dump() for eq in report.tone.evidenceQuotes],
             audio_hash=audio_hash,
+            cache_key=cache_key,
+            turns_count=len(report.transcript),
+            commitments_count=len(report.actionItems),
             asset_id=asset_id,
         )
         db.add(audit)
@@ -129,6 +169,7 @@ def persist_report_to_db(report: AnalysisReport, audio_hash: str, asset_id: str 
             act.callId = audit.id
             db.add(
                 CommitmentModel(
+                    org_id=org,
                     call_id=audit.id,
                     task=act.task,
                     owner=act.owner,
@@ -143,6 +184,8 @@ def persist_report_to_db(report: AnalysisReport, audio_hash: str, asset_id: str 
 
         db.commit()
         db.refresh(audit)
+        analytics_single_flight.invalidate(org)
+
         report.callId = audit.id
         report.assetId = asset_id
         if asset_id:
@@ -156,19 +199,24 @@ def persist_report_to_db(report: AnalysisReport, audio_hash: str, asset_id: str 
 
 
 async def execute_analysis_job(job_id: str) -> None:
-    """
-    Background worker that orchestrates:
-      1. Tier-2 & Tier-1 cache checks
-      2. Short (<12 min) single-pass multimodal OR Lengthy (>=12 min) Silence-Aware Map-Reduce
-      3. Per-chunk persistence for partial failure resumption
-      4. Final DB + Cache persistence and temp chunk cleanup
-    """
+    """Bounded async worker running analysis jobs behind MAX_CONCURRENT_JOBS semaphore."""
+    sem = _get_job_semaphore()
+    async with sem:
+        await _run_job_inner(job_id)
+
+
+async def _run_job_inner(job_id: str) -> None:
     db = SessionLocal()
     try:
         job = db.query(AnalysisJobModel).filter(AnalysisJobModel.id == job_id).first()
         if not job:
             return
-        asset = db.query(AudioAssetModel).filter(AudioAssetModel.id == job.asset_id).first()
+        org_id = job.org_id or "default-org"
+        asset = (
+            db.query(AudioAssetModel)
+            .filter(AudioAssetModel.id == job.asset_id, AudioAssetModel.org_id == org_id)
+            .first()
+        )
         if not asset:
             _update_job(job_id, status="FAILED", stage_message="Audio asset not found.", error_message="AudioAsset missing")
             return
@@ -187,14 +235,14 @@ async def execute_analysis_job(job_id: str) -> None:
     job_tmp_dir = os.path.join(TMP_CHUNKS_DIR, f"job_{job_id}")
 
     try:
-        # 1. Tier-2 Cache Check
-        cached_data = get_cached_report(cache_key)
+        # 1. Tenant-Scoped Tier-2 Cache Check
+        cached_data = get_cached_report(cache_key, org_id=org_id)
         if cached_data and cached_data.get("transcript"):
             cached_data["cached"] = True
             cached_data["assetId"] = asset_id
             cached_data["audioUrl"] = f"/api/assets/{asset_id}/stream"
             report = AnalysisReport(**cached_data)
-            call_id = await asyncio.to_thread(persist_report_to_db, report, audio_hash, asset_id)
+            call_id = await asyncio.to_thread(persist_report_to_db, report, audio_hash, asset_id, org_id, cache_key)
             _update_job(
                 job_id,
                 status="COMPLETED",
@@ -205,8 +253,8 @@ async def execute_analysis_job(job_id: str) -> None:
             )
             return
 
-        # 2. Tier-1 Audio Transcript Cache Check (~300ms fast re-analysis)
-        audio_base = get_audio_base_cache(audio_hash)
+        # 2. Tenant-Scoped Tier-1 Transcript Cache Check (~300ms fast re-analysis)
+        audio_base = get_audio_base_cache(audio_hash, org_id=org_id)
         if audio_base and audio_base.get("transcript"):
             _update_job(job_id, status="REDUCING", stage_message="Tier-1 transcript hit: re-evaluating against rubric...", progress_pct=70)
             report = await asyncio.to_thread(
@@ -215,11 +263,13 @@ async def execute_analysis_job(job_id: str) -> None:
                 filename=filename,
                 file_size_str=file_size_mb,
                 config=config,
+                org_id=org_id,
+                job_id=job_id,
             )
             report.assetId = asset_id
             report.audioUrl = f"/api/assets/{asset_id}/stream"
-            save_cached_report(cache_key, report.model_dump())
-            call_id = await asyncio.to_thread(persist_report_to_db, report, audio_hash, asset_id)
+            save_cached_report(cache_key, report.model_dump(), org_id=org_id)
+            call_id = await asyncio.to_thread(persist_report_to_db, report, audio_hash, asset_id, org_id, cache_key)
             _update_job(
                 job_id,
                 status="COMPLETED",
@@ -230,7 +280,6 @@ async def execute_analysis_job(job_id: str) -> None:
             )
             return
 
-        # Probe duration if missing
         if duration_sec <= 0:
             duration_sec = await asyncio.to_thread(probe_audio_duration, file_path)
 
@@ -250,6 +299,8 @@ async def execute_analysis_job(job_id: str) -> None:
                 filename=filename,
                 file_size_str=file_size_mb,
                 config=config,
+                org_id=org_id,
+                job_id=job_id,
             )
         else:
             # 4. Lengthy Audio (>= 12 min, e.g. 1-Hour+) -> Silence-Aware Map-Reduce
@@ -268,12 +319,12 @@ async def execute_analysis_job(job_id: str) -> None:
                 completed_chunks=0,
             )
 
-            # Check existing persisted chunk results for this audio_hash (resumable!)
             db = SessionLocal()
             try:
                 existing_rows = (
                     db.query(AudioChunkResultModel)
                     .filter(
+                        AudioChunkResultModel.org_id == org_id,
                         AudioChunkResultModel.audio_hash == audio_hash,
                         AudioChunkResultModel.status == "COMPLETED",
                     )
@@ -308,6 +359,8 @@ async def execute_analysis_job(job_id: str) -> None:
                             spec,
                             config,
                             speaker_context,
+                            org_id,
+                            job_id,
                         )
                     finally:
                         if os.path.isfile(chunk_path):
@@ -316,11 +369,11 @@ async def execute_analysis_job(job_id: str) -> None:
                             except OSError:
                                 pass
 
-                    # Persist completed chunk immediately for fault-tolerant resumption
                     db = SessionLocal()
                     try:
                         db.add(
                             AudioChunkResultModel(
+                                org_id=org_id,
                                 job_id=job_id,
                                 audio_hash=audio_hash,
                                 chunk_index=idx,
@@ -343,7 +396,6 @@ async def execute_analysis_job(job_id: str) -> None:
                     "acoustic_notes": notes,
                 })
 
-                # Build 2-turn speaker continuity context for the next chunk
                 tail_turns = segs[-2:] if segs else []
                 speaker_context = "\n".join(
                     f"{t['speaker']} [{t['timestamp']}]: {t['text']}" for t in tail_turns
@@ -368,6 +420,8 @@ async def execute_analysis_job(job_id: str) -> None:
                 filename,
                 file_size_mb,
                 config,
+                org_id,
+                job_id,
             )
 
         report.assetId = asset_id
@@ -381,9 +435,10 @@ async def execute_analysis_job(job_id: str) -> None:
                     "duration": report.duration,
                     "callMetadata": report.callMetadata.model_dump() if report.callMetadata else None,
                 },
+                org_id=org_id,
             )
-            save_cached_report(cache_key, report.model_dump())
-            call_id = await asyncio.to_thread(persist_report_to_db, report, audio_hash, asset_id)
+            save_cached_report(cache_key, report.model_dump(), org_id=org_id)
+            call_id = await asyncio.to_thread(persist_report_to_db, report, audio_hash, asset_id, org_id, cache_key)
         else:
             call_id = report.callId
 
@@ -406,3 +461,41 @@ async def execute_analysis_job(job_id: str) -> None:
     finally:
         if os.path.isdir(job_tmp_dir):
             shutil.rmtree(job_tmp_dir, ignore_errors=True)
+
+
+def recover_orphaned_jobs_on_startup() -> int:
+    """
+    Recovers in-flight jobs left orphaned by a server restart/crash:
+    - Jobs younger than 2 hours are re-dispatched (resuming from saved chunk results).
+    - Older stale jobs are marked FAILED cleanly.
+    """
+    active_states = ("QUEUED", "SPLITTING", "TRANSCRIBING", "MERGING", "REDUCING")
+    now = utcnow_naive()
+    cutoff = now - timedelta(hours=2)
+    requeued = 0
+
+    db = SessionLocal()
+    try:
+        orphans = db.query(AnalysisJobModel).filter(AnalysisJobModel.status.in_(active_states)).all()
+        for job in orphans:
+            if job.created_at and job.created_at < cutoff:
+                job.status = "FAILED"
+                job.stage_message = "Job expired after server restart."
+                job.error_message = "Job timed out before completion."
+            else:
+                job.status = "QUEUED"
+                job.stage_message = "Resuming job after server restart..."
+                requeued += 1
+                try:
+                    asyncio.get_running_loop().create_task(execute_analysis_job(job.id))
+                except RuntimeError:
+                    pass
+        if orphans:
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Startup Job Recovery Warning] {e}")
+    finally:
+        db.close()
+
+    return requeued

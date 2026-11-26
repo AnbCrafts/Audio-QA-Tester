@@ -5,26 +5,29 @@ import json
 import hashlib
 import tempfile
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Optional, List
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request
+from typing import Optional
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func, case, or_, and_
 
-# Load environment variables
+# Load environment variables before database/service imports
 load_dotenv()
 
-from database import engine, Base, get_db, run_schema_migrations, SessionLocal
+from database import get_db, run_schema_migrations, SessionLocal
 from models import (
+    OrganizationModel,
+    UserModel,
     CallAuditModel,
-    TranscriptSegmentModel,
     CommitmentModel,
     AudioAssetModel,
     UploadSessionModel,
     AnalysisJobModel,
+    utcnow_naive,
 )
 from schemas import (
     AnalysisConfigInput,
@@ -32,6 +35,13 @@ from schemas import (
     CallHistoryItem,
     CommitmentStatusUpdate,
     AnalyticsOverview,
+    PaginatedHistoryResponse,
+    PaginatedCommitmentsResponse,
+    OrgTokenQuotaResponse,
+    UpdateOrgQuotaRequest,
+    RegisterRequest,
+    LoginRequest,
+    UserProfileResponse,
     UploadInitRequest,
     UploadInitResponse,
     UploadCompleteResponse,
@@ -51,42 +61,57 @@ from storage_service import (
     validate_audio_magic_bytes,
     storage_provider,
 )
-from job_worker import execute_analysis_job
+from job_worker import (
+    execute_analysis_job,
+    persist_report_to_db,
+    recover_orphaned_jobs_on_startup,
+)
 from cache_service import (
-    compute_audio_hash,
     compute_config_hash,
     get_cached_report,
     save_cached_report,
     get_audio_base_cache,
     save_audio_base_cache,
+    cleanup_expired_cache,
+    clear_all_cache,
+)
+from traffic_guard import (
+    rate_limit_analysis,
+    rate_limit_auth,
+    analytics_single_flight,
+    reserve_idempotency,
+    complete_idempotency,
+    release_idempotency,
+)
+from ai_gateway import (
+    gemini_circuit,
+    groq_circuit,
+    DailyQuotaExceededError,
+    get_org_daily_token_status,
+    assert_org_daily_quota,
+    estimate_audio_tokens,
+)
+from auth_service import (
+    COOKIE_NAME,
+    AuthUser,
+    hash_password,
+    verify_password,
+    create_signed_token,
+    decode_signed_token,
+    extract_auth_user_from_request,
+    get_current_user,
+    require_admin,
 )
 
-# Automatically create new tables and run idempotent column migrations on startup
+# Run idempotent schema migrations and default workspace seeding on import
 run_schema_migrations()
 
-app = FastAPI(
-    title="ScaleWorks AI - Enterprise Call Quality Intelligence Platform",
-    description="Backend API with SQLAlchemy DB persistence, Chunked Resumable Uploads, Async Map-Reduce AI Pipeline, and Two-Tier Caching.",
-    version="2.1.0"
-)
 
-# Enable CORS for local development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.on_event("startup")
-def cleanup_stale_uploads_on_startup():
-    """Removes expired temporary upload chunks older than TTL."""
+def _cleanup_stale_uploads() -> None:
     storage_provider.cleanup_stale_tmp()
     db = SessionLocal()
     try:
-        now = datetime.utcnow()
+        now = utcnow_naive()
         stale = (
             db.query(UploadSessionModel)
             .filter(UploadSessionModel.status == "UPLOADING", UploadSessionModel.expires_at < now)
@@ -103,95 +128,193 @@ def cleanup_stale_uploads_on_startup():
     finally:
         db.close()
 
-def _save_report_to_db(db: Session, report: AnalysisReport, audio_hash: Optional[str] = None) -> str:
-    """Persists an analysis report, its transcript turns, and extracted action items to the database."""
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _cleanup_stale_uploads()
+    cleanup_expired_cache()
+    recover_orphaned_jobs_on_startup()
+    yield
+
+
+app = FastAPI(
+    title="ScaleWorks AI - Enterprise Call Quality Intelligence Platform",
+    description="Multi-tenant Backend API with Chunked Resumable Uploads, 1-Hr Map-Reduce, SQL Aggregations, AI Resilience, and Per-Tenant Daily Token Quotas.",
+    version="3.0.0",
+    lifespan=lifespan,
+)
+
+_raw_origins = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173",
+)
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
+
+def _set_auth_cookie(response: Response, user: AuthUser) -> None:
+    token = create_signed_token(
+        {
+            "userId": user.user_id,
+            "email": user.email,
+            "fullName": user.full_name,
+            "orgId": user.org_id,
+            "orgName": user.org_name,
+            "role": user.role,
+        }
+    )
+    is_secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=is_secure,
+        max_age=86400 * 7,
+        path="/",
+    )
+
+
+def _quota_exceeded_response(err: DailyQuotaExceededError) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        headers={"Retry-After": str(err.retry_after_seconds)},
+        content={
+            "detail": str(err),
+            "code": "DAILY_QUOTA_EXCEEDED",
+            "usedToday": err.used_today,
+            "dailyLimit": err.daily_limit,
+            "renewsAtUtc": err.renews_at_utc,
+            "retryAfterSeconds": err.retry_after_seconds,
+        },
+    )
+
+
+def _parse_cursor(cursor: Optional[str]) -> Optional[tuple[datetime, str]]:
+    if not cursor or "|" not in cursor:
+        return None
+    ts_part, id_part = cursor.split("|", 1)
     try:
-        # Calculate overall score for DB storage
-        raw_score = 4.5
-        if report.tone.rating == 'RED':
-            raw_score = 2.4
-        elif report.tone.sentimentBreakdown:
-            p = report.tone.sentimentBreakdown.repProfessionalism
-            e = report.tone.sentimentBreakdown.repEmpathy
-            raw_score = round(((p + e) / 200.0) * 5.0, 1)
+        dt = datetime.fromisoformat(ts_part)
+        return dt, id_part
+    except ValueError:
+        return None
 
-        category_name = "General Call"
-        category_conf = 90
-        domain_sum = ""
-        etiquette_list = []
-        greeting = True
-        polite = True
-        closing = True
 
-        if report.callMetadata:
-            category_name = report.callMetadata.detectedCategory or category_name
-            category_conf = report.callMetadata.categoryConfidence or category_conf
-            domain_sum = report.callMetadata.domainSummary or ""
-            etiquette_list = report.callMetadata.etiquetteNotes or []
-            greeting = report.callMetadata.greetingObserved
-            polite = report.callMetadata.politeLanguageObserved
-            closing = report.callMetadata.professionalClosingObserved
+# =============================================================================
+# AUTHENTICATION & WORKSPACE MULTI-TENANCY ENDPOINTS
+# =============================================================================
 
-        audit = CallAuditModel(
-            filename=report.fileName,
-            file_size=report.fileSize,
-            duration=report.duration,
-            overall_score=raw_score,
-            tone_rating=report.tone.rating,
-            headline=report.tone.headline,
-            explanation=report.tone.explanation,
-            confidence_score=report.tone.confidenceScore,
-            sentiment_breakdown=report.tone.sentimentBreakdown.model_dump() if report.tone.sentimentBreakdown else {},
-            category=category_name,
-            category_confidence=category_conf,
-            domain_summary=domain_sum,
-            greeting_observed=greeting,
-            polite_language_observed=polite,
-            professional_closing_observed=closing,
-            etiquette_notes=etiquette_list,
-            evidence_quotes=[eq.model_dump() for eq in report.tone.evidenceQuotes],
-            audio_hash=audio_hash,
-        )
-        db.add(audit)
-        db.flush()  # Generates audit.id
+@app.post("/api/auth/register", response_model=UserProfileResponse, dependencies=[Depends(rate_limit_auth)])
+def register_workspace(payload: RegisterRequest, response: Response, db: Session = Depends(get_db)):
+    clean_email = payload.email.strip().lower()
+    if db.query(UserModel).filter(UserModel.email == clean_email).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
 
-        # Insert transcript segments
-        for seg in report.transcript:
-            t_model = TranscriptSegmentModel(
-                call_id=audit.id,
-                speaker=seg.speaker,
-                is_rep=seg.isRep,
-                timestamp=seg.timestamp,
-                seconds=seg.seconds,
-                text=seg.text,
-                is_flagged_evidence=seg.isFlaggedEvidence,
-            )
-            db.add(t_model)
+    default_limit = int(os.getenv("DEFAULT_ORG_DAILY_TOKEN_LIMIT", "500000"))
+    org = OrganizationModel(
+        id=str(uuid.uuid4()),
+        name=payload.workspaceName.strip(),
+        daily_token_limit=default_limit,
+    )
+    db.add(org)
+    db.flush()
 
-        # Insert extracted commitments
-        for act in report.actionItems:
-            act.callId = audit.id
-            c_model = CommitmentModel(
-                call_id=audit.id,
-                task=act.task,
-                owner=act.owner,
-                deadline=act.deadline,
-                evidence_quote=act.evidenceQuote,
-                timestamp=act.timestamp,
-                seconds=act.seconds or 0,
-                confidence=act.confidence,
-                status=act.status or "PENDING",
-            )
-            db.add(c_model)
+    user = UserModel(
+        id=str(uuid.uuid4()),
+        email=clean_email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.fullName.strip() or clean_email.split("@")[0],
+        org_id=org.id,
+        role="ADMIN",
+    )
+    db.add(user)
+    db.commit()
 
-        db.commit()
-        db.refresh(audit)
-        report.callId = audit.id
-        return audit.id
-    except Exception as db_err:
-        db.rollback()
-        print(f"[Warning] Failed to persist audit to database: {db_err}")
-        return report.callId
+    auth_user = AuthUser(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        org_id=org.id,
+        org_name=org.name,
+        role=user.role,
+    )
+    _set_auth_cookie(response, auth_user)
+    return UserProfileResponse(
+        userId=user.id,
+        email=user.email,
+        fullName=user.full_name,
+        orgId=org.id,
+        orgName=org.name,
+        role=user.role,
+    )
+
+
+@app.post("/api/auth/login", response_model=UserProfileResponse, dependencies=[Depends(rate_limit_auth)])
+def login_user(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+    clean_email = payload.email.strip().lower()
+    user = db.query(UserModel).filter(UserModel.email == clean_email).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+
+    org = db.query(OrganizationModel).filter(OrganizationModel.id == user.org_id).first()
+    org_name = org.name if org else "Workspace"
+    auth_user = AuthUser(
+        user_id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        org_id=user.org_id,
+        org_name=org_name,
+        role=user.role,
+    )
+    _set_auth_cookie(response, auth_user)
+    return UserProfileResponse(
+        userId=user.id,
+        email=user.email,
+        fullName=user.full_name,
+        orgId=user.org_id,
+        orgName=org_name,
+        role=user.role,
+    )
+
+
+@app.post("/api/auth/logout")
+def logout_user(response: Response):
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return {"status": "logged_out"}
+
+
+@app.get("/api/auth/me", response_model=UserProfileResponse)
+def get_me(user: AuthUser = Depends(get_current_user)):
+    return UserProfileResponse(
+        userId=user.user_id,
+        email=user.email,
+        fullName=user.full_name,
+        orgId=user.org_id,
+        orgName=user.org_name,
+        role=user.role,
+    )
+
+
+# =============================================================================
+# HEALTH, CACHE & PER-TENANT TOKEN QUOTA ENDPOINTS
+# =============================================================================
 
 @app.get("/api/health")
 def health_check(db: Session = Depends(get_db)):
@@ -210,32 +333,50 @@ def health_check(db: Session = Depends(get_db)):
         "gemini_configured": bool(gemini_key),
         "groq_configured": bool(groq_key),
         "database_connected": db_ok,
+        "gemini_circuit": gemini_circuit.state(),
+        "groq_circuit": groq_circuit.state(),
     }
 
+
 @app.delete("/api/cache")
-def clear_cache():
-    from cache_service import CACHE_DIR
-    cleared_count = 0
-    if os.path.exists(CACHE_DIR):
-        for f in os.listdir(CACHE_DIR):
-            if f.endswith(".json"):
-                try:
-                    os.remove(os.path.join(CACHE_DIR, f))
-                    cleared_count += 1
-                except OSError:
-                    pass
-    return {"status": "cache_cleared", "deleted_files": cleared_count}
+def clear_cache(user: AuthUser = Depends(require_admin)):
+    deleted = clear_all_cache(org_id=user.org_id)
+    analytics_single_flight.invalidate(user.org_id)
+    return {"status": "cache_cleared", "deleted_entries": deleted}
+
+
+@app.get("/api/org/token-quota", response_model=OrgTokenQuotaResponse)
+@app.get("/api/analytics/tokens", response_model=OrgTokenQuotaResponse)
+def get_tenant_token_quota(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Returns per-tenant daily token usage, remaining balance, limit, and next UTC renewal time."""
+    return get_org_daily_token_status(db, user.org_id)
+
+
+@app.patch("/api/org/token-quota", response_model=OrgTokenQuotaResponse)
+def update_tenant_token_quota(
+    payload: UpdateOrgQuotaRequest,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Admin-only endpoint to adjust the organization's daily token limit."""
+    org = db.query(OrganizationModel).filter(OrganizationModel.id == user.org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    org.daily_token_limit = payload.dailyLimit
+    db.commit()
+    return get_org_daily_token_status(db, user.org_id)
+
 
 # =============================================================================
 # CHUNKED RESUMABLE UPLOAD, RANGE STREAMING & ASYNC JOB ENDPOINTS
 # =============================================================================
 
-@app.post("/api/uploads/init", response_model=UploadInitResponse)
-def init_chunked_upload(payload: UploadInitRequest, db: Session = Depends(get_db)):
-    """
-    Initializes a 5 MB chunked resumable upload session after checking SHA-256 deduplication.
-    If the exact audio bytes already exist in AudioAssetModel, returns deduplicated=True (0 bytes uploaded).
-    """
+@app.post("/api/uploads/init", response_model=UploadInitResponse, dependencies=[Depends(rate_limit_analysis)])
+def init_chunked_upload(
+    payload: UploadInitRequest,
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     clean_name = sanitize_filename(payload.filename)
     ext = os.path.splitext(clean_name)[1].lower()
     if ext not in VALID_AUDIO_EXTENSIONS:
@@ -249,8 +390,12 @@ def init_chunked_upload(payload: UploadInitRequest, db: Session = Depends(get_db
 
     audio_hash = payload.sha256.strip().lower()[:24]
 
-    # 1. Deduplication check against existing verified AudioAssets
-    existing_asset = db.query(AudioAssetModel).filter(AudioAssetModel.sha256 == audio_hash).first()
+    # Tenant-scoped deduplication check (never cross tenants!)
+    existing_asset = (
+        db.query(AudioAssetModel)
+        .filter(AudioAssetModel.org_id == user.org_id, AudioAssetModel.sha256 == audio_hash)
+        .first()
+    )
     if existing_asset and os.path.isfile(storage_provider.get_local_path(existing_asset.storage_key)):
         return UploadInitResponse(
             deduplicated=True,
@@ -262,12 +407,11 @@ def init_chunked_upload(payload: UploadInitRequest, db: Session = Depends(get_db
         )
 
     total_chunks = max(1, (payload.sizeBytes + CHUNK_SIZE_BYTES - 1) // CHUNK_SIZE_BYTES)
-
-    # 2. Resume an incomplete active session for the same file if available
-    now = datetime.utcnow()
+    now = utcnow_naive()
     existing_sess = (
         db.query(UploadSessionModel)
         .filter(
+            UploadSessionModel.org_id == user.org_id,
             UploadSessionModel.sha256 == audio_hash,
             UploadSessionModel.total_size_bytes == payload.sizeBytes,
             UploadSessionModel.status == "UPLOADING",
@@ -287,6 +431,7 @@ def init_chunked_upload(payload: UploadInitRequest, db: Session = Depends(get_db
 
     session = UploadSessionModel(
         id=str(uuid.uuid4()),
+        org_id=user.org_id,
         filename=clean_name,
         mime_type=payload.mimeType or MIME_BY_EXT.get(ext, "audio/mp4"),
         total_size_bytes=payload.sizeBytes,
@@ -313,13 +458,17 @@ async def upload_chunk(
     upload_id: str,
     chunk_index: int,
     chunk: UploadFile = File(...),
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Receives a single <=5 MB chunk via streaming I/O and validates magic bytes on chunk 0."""
-    session = db.query(UploadSessionModel).filter(UploadSessionModel.id == upload_id).first()
+    session = (
+        db.query(UploadSessionModel)
+        .filter(UploadSessionModel.id == upload_id, UploadSessionModel.org_id == user.org_id)
+        .first()
+    )
     if not session or session.status != "UPLOADING":
         raise HTTPException(status_code=404, detail="Upload session not found or inactive.")
-    if session.expires_at < datetime.utcnow():
+    if session.expires_at < utcnow_naive():
         storage_provider.delete_upload_tmp(upload_id)
         session.status = "EXPIRED"
         db.commit()
@@ -333,7 +482,7 @@ async def upload_chunk(
         raise HTTPException(status_code=413, detail=str(ve))
 
     if chunk_index == 0:
-        is_valid, detected_fmt = validate_audio_magic_bytes(leading_bytes)
+        is_valid, _ = validate_audio_magic_bytes(leading_bytes)
         if not is_valid:
             storage_provider.delete_upload_tmp(upload_id)
             session.status = "EXPIRED"
@@ -352,9 +501,16 @@ async def upload_chunk(
 
 
 @app.post("/api/uploads/{upload_id}/complete", response_model=UploadCompleteResponse)
-async def complete_chunked_upload(upload_id: str, db: Session = Depends(get_db)):
-    """Assembles uploaded chunks, verifies SHA-256 & magic bytes, and registers AudioAssetModel."""
-    session = db.query(UploadSessionModel).filter(UploadSessionModel.id == upload_id).first()
+async def complete_chunked_upload(
+    upload_id: str,
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = (
+        db.query(UploadSessionModel)
+        .filter(UploadSessionModel.id == upload_id, UploadSessionModel.org_id == user.org_id)
+        .first()
+    )
     if not session or session.status != "UPLOADING":
         raise HTTPException(status_code=404, detail="Upload session not found or already completed.")
 
@@ -397,6 +553,7 @@ async def complete_chunked_upload(upload_id: str, db: Session = Depends(get_db))
 
     asset = AudioAssetModel(
         id=asset_id,
+        org_id=user.org_id,
         sha256=assembled_hash,
         original_filename=session.filename,
         mime_type=session.mime_type,
@@ -421,12 +578,30 @@ async def complete_chunked_upload(upload_id: str, db: Session = Depends(get_db))
 
 
 @app.get("/api/assets/{asset_id}/stream")
-def stream_audio_asset(asset_id: str, request: Request, db: Session = Depends(get_db)):
-    """
-    Streams persisted audio with HTTP 206 Partial Content byte-range support so
-    HTML5 <audio> scrubbing works reliably for 1-hour+ files even after page reloads.
-    """
-    asset = db.query(AudioAssetModel).filter(AudioAssetModel.id == asset_id).first()
+def stream_audio_asset(
+    asset_id: str,
+    request: Request,
+    media_token: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Streams persisted tenant audio with HTTP 206 Partial Content byte-range support."""
+    org_id: Optional[str] = None
+    auth_user = extract_auth_user_from_request(request)
+    if auth_user:
+        org_id = auth_user.org_id
+    elif media_token:
+        m_payload = decode_signed_token(media_token)
+        if m_payload and m_payload.get("scope") == "media" and m_payload.get("assetId") == asset_id:
+            org_id = m_payload.get("orgId")
+
+    if not org_id:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+    asset = (
+        db.query(AudioAssetModel)
+        .filter(AudioAssetModel.id == asset_id, AudioAssetModel.org_id == org_id)
+        .first()
+    )
     if not asset:
         raise HTTPException(status_code=404, detail="Audio asset not found.")
 
@@ -473,41 +648,84 @@ def stream_audio_asset(asset_id: str, request: Request, db: Session = Depends(ge
     )
 
 
-@app.post("/api/analyze/async", status_code=202, response_model=AnalysisJobCreateResponse)
-async def start_async_analysis(payload: AnalyzeAssetRequest, db: Session = Depends(get_db)):
+@app.post("/api/analyze/async", status_code=202, response_model=AnalysisJobCreateResponse, dependencies=[Depends(rate_limit_analysis)])
+async def start_async_analysis(
+    payload: AnalyzeAssetRequest,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Queues an asynchronous analysis job (returns 202 Accepted immediately).
-    Supports both initial analysis and zero-reupload re-analysis via assetId.
+    Queues an asynchronous analysis job with:
+    - Per-tenant daily token quota enforcement (429 + next-day renewal if exhausted)
+    - Idempotency-Key deduplication against double-clicks/retries
     """
-    asset = db.query(AudioAssetModel).filter(AudioAssetModel.id == payload.assetId).first()
-    if not asset:
-        raise HTTPException(status_code=404, detail="Audio asset not found.")
+    idem_cached = reserve_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key)
+    if idem_cached is not None:
+        return AnalysisJobCreateResponse(**idem_cached)
 
-    config_dict = payload.config.model_dump()
-    config_hash = compute_config_hash(config_dict)
-    job = AnalysisJobModel(
-        id=str(uuid.uuid4()),
-        asset_id=asset.id,
-        audio_hash=asset.sha256,
-        config_hash=config_hash,
-        config_json=config_dict,
-        status="QUEUED",
-        stage_message="Queued for processing...",
-        progress_pct=2,
-        total_chunks=1,
-        completed_chunks=0,
-    )
-    db.add(job)
-    db.commit()
+    try:
+        asset = (
+            db.query(AudioAssetModel)
+            .filter(AudioAssetModel.id == payload.assetId, AudioAssetModel.org_id == user.org_id)
+            .first()
+        )
+        if not asset:
+            raise HTTPException(status_code=404, detail="Audio asset not found.")
 
-    asyncio.create_task(execute_analysis_job(job.id))
+        config_dict = payload.config.model_dump()
+        config_hash = compute_config_hash(config_dict)
+        cache_key = f"{asset.sha256}_{config_hash}"
 
-    return AnalysisJobCreateResponse(jobId=job.id, status="QUEUED", cached=False)
+        # Enforce daily token quota on non-Tier-2-cached runs
+        if not get_cached_report(cache_key, org_id=user.org_id):
+            est_tokens = estimate_audio_tokens(asset.duration_seconds or 30.0)
+            try:
+                assert_org_daily_quota(db, user.org_id, estimated_tokens=est_tokens)
+            except DailyQuotaExceededError as q_err:
+                release_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key)
+                return _quota_exceeded_response(q_err)
+
+        job = AnalysisJobModel(
+            id=str(uuid.uuid4()),
+            org_id=user.org_id,
+            asset_id=asset.id,
+            audio_hash=asset.sha256,
+            config_hash=config_hash,
+            config_json=config_dict,
+            status="QUEUED",
+            stage_message="Queued for processing...",
+            progress_pct=2,
+            total_chunks=1,
+            completed_chunks=0,
+        )
+        db.add(job)
+        db.commit()
+
+        resp_body = {"jobId": job.id, "status": "QUEUED", "cached": False}
+        complete_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key, resp_body, http_status=202)
+        asyncio.create_task(execute_analysis_job(job.id))
+
+        return AnalysisJobCreateResponse(**resp_body)
+    except HTTPException:
+        release_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key)
+        raise
+    except Exception:
+        release_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key)
+        raise
 
 
 @app.get("/api/jobs/{job_id}", response_model=AnalysisJobStatusResponse)
-def get_job_status(job_id: str, db: Session = Depends(get_db)):
-    job = db.query(AnalysisJobModel).filter(AnalysisJobModel.id == job_id).first()
+def get_job_status(
+    job_id: str,
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = (
+        db.query(AnalysisJobModel)
+        .filter(AnalysisJobModel.id == job_id, AnalysisJobModel.org_id == user.org_id)
+        .first()
+    )
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     report_obj = AnalysisReport(**job.result_json) if job.result_json else None
@@ -526,8 +744,12 @@ def get_job_status(job_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/api/jobs/{job_id}/events")
-async def stream_job_events(job_id: str, request: Request):
-    """Server-Sent Events (SSE) endpoint streaming live job stage & chunk progress."""
+async def stream_job_events(
+    job_id: str,
+    request: Request,
+    user: AuthUser = Depends(get_current_user),
+):
+    """Server-Sent Events (SSE) endpoint streaming live tenant-scoped job progress."""
     async def event_generator():
         last_signature = None
         while True:
@@ -536,7 +758,11 @@ async def stream_job_events(job_id: str, request: Request):
 
             db = SessionLocal()
             try:
-                job = db.query(AnalysisJobModel).filter(AnalysisJobModel.id == job_id).first()
+                job = (
+                    db.query(AnalysisJobModel)
+                    .filter(AnalysisJobModel.id == job_id, AnalysisJobModel.org_id == user.org_id)
+                    .first()
+                )
                 if not job:
                     yield f"data: {json.dumps({'status': 'FAILED', 'errorMessage': 'Job not found'})}\n\n"
                     break
@@ -578,28 +804,23 @@ async def stream_job_events(job_id: str, request: Request):
     )
 
 
-@app.post("/api/analyze", response_model=AnalysisReport)
+@app.post("/api/analyze", response_model=AnalysisReport, dependencies=[Depends(rate_limit_analysis)])
 async def analyze_call(
     file: UploadFile = File(...),
     config: str = Form(...),
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Validate file type (.m4a preferred)
     filename = sanitize_filename(file.filename or "recording.m4a")
     if not any(filename.lower().endswith(ext) for ext in VALID_AUDIO_EXTENSIONS):
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported audio format. Please upload an .m4a audio file."
-        )
+        raise HTTPException(status_code=400, detail="Unsupported audio format.")
 
-    # Parse config JSON
     try:
         config_dict = json.loads(config)
         parsed_config = AnalysisConfigInput(**config_dict)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid configuration parameters: {e}")
 
-    # Stream uploaded file to disk in 64 KB chunks (no whole-file RAM buffering!)
     suffix = os.path.splitext(filename)[1] or ".m4a"
     hasher = hashlib.sha256()
     total_bytes = 0
@@ -633,16 +854,19 @@ async def analyze_call(
     cache_key = f"{audio_hash}_{config_hash}"
 
     try:
-        # Tier 2 Cache Check
-        cached_data = get_cached_report(cache_key)
+        cached_data = get_cached_report(cache_key, org_id=user.org_id)
         if cached_data and cached_data.get("transcript"):
             cached_data["cached"] = True
             report = AnalysisReport(**cached_data)
-            _save_report_to_db(db, report, audio_hash=audio_hash)
+            await asyncio.to_thread(persist_report_to_db, report, audio_hash, None, user.org_id, cache_key)
             return report
 
-        # Tier 1 Cache Check
-        audio_base = get_audio_base_cache(audio_hash)
+        try:
+            assert_org_daily_quota(db, user.org_id)
+        except DailyQuotaExceededError as q_err:
+            return _quota_exceeded_response(q_err)
+
+        audio_base = get_audio_base_cache(audio_hash, org_id=user.org_id)
         if audio_base and audio_base.get("transcript"):
             try:
                 fast_report = await asyncio.to_thread(
@@ -650,11 +874,12 @@ async def analyze_call(
                     audio_base=audio_base,
                     filename=filename,
                     file_size_str=file_size_mb,
-                    config=parsed_config
+                    config=parsed_config,
+                    org_id=user.org_id,
                 )
                 if fast_report.transcript:
-                    save_cached_report(cache_key, fast_report.model_dump())
-                    _save_report_to_db(db, fast_report, audio_hash=audio_hash)
+                    save_cached_report(cache_key, fast_report.model_dump(), org_id=user.org_id)
+                    await asyncio.to_thread(persist_report_to_db, fast_report, audio_hash, None, user.org_id, cache_key)
                 return fast_report
             except Exception as tier1_err:
                 print(f"[Tier-1 Fallback] Fast re-eval hit issue ({tier1_err}), falling back to full audio pipeline...")
@@ -664,17 +889,24 @@ async def analyze_call(
             file_path=tmp_path,
             filename=filename,
             file_size_str=file_size_mb,
-            config=parsed_config
+            config=parsed_config,
+            org_id=user.org_id,
         )
         if report.transcript:
-            save_audio_base_cache(audio_hash, {
-                "transcript": [seg.model_dump() for seg in report.transcript],
-                "duration": report.duration,
-                "callMetadata": report.callMetadata.model_dump() if report.callMetadata else None
-            })
-            save_cached_report(cache_key, report.model_dump())
-            _save_report_to_db(db, report, audio_hash=audio_hash)
+            save_audio_base_cache(
+                audio_hash,
+                {
+                    "transcript": [seg.model_dump() for seg in report.transcript],
+                    "duration": report.duration,
+                    "callMetadata": report.callMetadata.model_dump() if report.callMetadata else None,
+                },
+                org_id=user.org_id,
+            )
+            save_cached_report(cache_key, report.model_dump(), org_id=user.org_id)
+            await asyncio.to_thread(persist_report_to_db, report, audio_hash, None, user.org_id, cache_key)
         return report
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis pipeline error: {str(e)}")
     finally:
@@ -684,33 +916,52 @@ async def analyze_call(
             except OSError:
                 pass
 
+
 # =============================================================================
-# HISTORICAL CALL EXPLORER ENDPOINTS
+# HISTORICAL CALL EXPLORER ENDPOINTS (KEYSET CURSOR + ZERO N+1)
 # =============================================================================
 
-@app.get("/api/history", response_model=List[CallHistoryItem])
+@app.get("/api/history", response_model=PaginatedHistoryResponse)
 def get_call_history(
     search: Optional[str] = Query(None),
     tone: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Returns past audited calls from the database with optional search and tone filter."""
-    query = db.query(CallAuditModel)
+    """Tenant-scoped O(log N) keyset-paginated history using denormalized counters (zero N+1)."""
+    query = db.query(CallAuditModel).filter(CallAuditModel.org_id == user.org_id)
     if tone and tone.upper() in ("GREEN", "RED"):
         query = query.filter(CallAuditModel.tone_rating == tone.upper())
     if search and search.strip():
         term = f"%{search.strip()}%"
         query = query.filter(
-            (CallAuditModel.filename.ilike(term)) |
-            (CallAuditModel.headline.ilike(term)) |
-            (CallAuditModel.category.ilike(term))
+            (CallAuditModel.filename.ilike(term))
+            | (CallAuditModel.headline.ilike(term))
+            | (CallAuditModel.category.ilike(term))
         )
-    
-    audits = query.order_by(desc(CallAuditModel.created_at)).limit(limit).all()
-    results = []
-    for a in audits:
-        results.append(CallHistoryItem(
+
+    parsed_cursor = _parse_cursor(cursor)
+    if parsed_cursor:
+        c_dt, c_id = parsed_cursor
+        query = query.filter(
+            or_(
+                CallAuditModel.created_at < c_dt,
+                and_(CallAuditModel.created_at == c_dt, CallAuditModel.id < c_id),
+            )
+        )
+
+    rows = (
+        query.order_by(desc(CallAuditModel.created_at), desc(CallAuditModel.id))
+        .limit(limit + 1)
+        .all()
+    )
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+
+    items = [
+        CallHistoryItem(
             id=a.id,
             filename=a.filename,
             fileSize=a.file_size or "0 MB",
@@ -719,108 +970,187 @@ def get_call_history(
             toneRating=a.tone_rating,
             category=a.category or "General",
             headline=a.headline or "",
-            commitmentsCount=len(a.commitments),
-            turnsCount=len(a.transcripts),
+            commitmentsCount=a.commitments_count or 0,
+            turnsCount=a.turns_count or 0,
             createdAt=a.created_at.strftime("%b %d, %Y %H:%M") if a.created_at else "",
-        ))
-    return results
+        )
+        for a in page_rows
+    ]
+
+    next_cursor = None
+    if has_more and page_rows:
+        last = page_rows[-1]
+        if last.created_at:
+            next_cursor = f"{last.created_at.isoformat()}|{last.id}"
+
+    return PaginatedHistoryResponse(items=items, nextCursor=next_cursor, hasMore=has_more)
+
 
 @app.get("/api/history/{call_id}")
-def get_historical_call_detail(call_id: str, db: Session = Depends(get_db)):
-    """Fetches the full analysis report and transcript turns for a specific past call."""
-    audit = db.query(CallAuditModel).filter(CallAuditModel.id == call_id).first()
+def get_historical_call_detail(
+    call_id: str,
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    audit = (
+        db.query(CallAuditModel)
+        .filter(CallAuditModel.id == call_id, CallAuditModel.org_id == user.org_id)
+        .first()
+    )
     if not audit:
         raise HTTPException(status_code=404, detail="Call audit record not found.")
     return audit.to_report_dict()
 
+
 @app.delete("/api/history/{call_id}")
-def delete_historical_call(call_id: str, db: Session = Depends(get_db)):
-    """Deletes an audit record and cascades to all its turns and action items."""
-    audit = db.query(CallAuditModel).filter(CallAuditModel.id == call_id).first()
+def delete_historical_call(
+    call_id: str,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    audit = (
+        db.query(CallAuditModel)
+        .filter(CallAuditModel.id == call_id, CallAuditModel.org_id == user.org_id)
+        .first()
+    )
     if not audit:
         raise HTTPException(status_code=404, detail="Call record not found.")
     db.delete(audit)
     db.commit()
+    analytics_single_flight.invalidate(user.org_id)
     return {"status": "deleted", "callId": call_id}
 
+
 # =============================================================================
-# COMMITMENTS & ACTION ITEM TRACKING ENDPOINTS
+# COMMITMENTS & ACTION ITEM TRACKING ENDPOINTS (KEYSET CURSOR)
 # =============================================================================
 
-@app.get("/api/commitments")
+@app.get("/api/commitments", response_model=PaginatedCommitmentsResponse)
 def get_all_commitments(
     status: Optional[str] = Query(None),
     owner: Optional[str] = Query(None),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Returns all extracted commitments across all calls with their lifecycle status."""
-    query = db.query(CommitmentModel)
+    query = db.query(CommitmentModel).filter(CommitmentModel.org_id == user.org_id)
     if status and status.upper() in ("PENDING", "IN_PROGRESS", "COMPLETED"):
         query = query.filter(CommitmentModel.status == status.upper())
     if owner:
         query = query.filter(CommitmentModel.owner.ilike(f"%{owner}%"))
-    
-    commitments = query.order_by(desc(CommitmentModel.created_at)).all()
-    return [c.to_dict() for c in commitments]
+
+    parsed_cursor = _parse_cursor(cursor)
+    if parsed_cursor:
+        c_dt, c_id = parsed_cursor
+        query = query.filter(
+            or_(
+                CommitmentModel.created_at < c_dt,
+                and_(CommitmentModel.created_at == c_dt, CommitmentModel.id < c_id),
+            )
+        )
+
+    rows = (
+        query.order_by(desc(CommitmentModel.created_at), desc(CommitmentModel.id))
+        .limit(limit + 1)
+        .all()
+    )
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+
+    next_cursor = None
+    if has_more and page_rows:
+        last = page_rows[-1]
+        if last.created_at:
+            next_cursor = f"{last.created_at.isoformat()}|{last.id}"
+
+    return PaginatedCommitmentsResponse(
+        items=[c.to_dict() for c in page_rows],
+        nextCursor=next_cursor,
+        hasMore=has_more,
+    )
+
 
 @app.patch("/api/commitments/{commitment_id}")
 def update_commitment_status(
     commitment_id: str,
     payload: CommitmentStatusUpdate,
+    user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Updates the status of a commitment (PENDING -> IN_PROGRESS -> COMPLETED)."""
-    comm = db.query(CommitmentModel).filter(CommitmentModel.id == commitment_id).first()
+    comm = (
+        db.query(CommitmentModel)
+        .filter(CommitmentModel.id == commitment_id, CommitmentModel.org_id == user.org_id)
+        .first()
+    )
     if not comm:
         raise HTTPException(status_code=404, detail="Commitment not found.")
     comm.status = payload.status
     db.commit()
+    analytics_single_flight.invalidate(user.org_id)
     return comm.to_dict()
 
+
 # =============================================================================
-# TEAM ANALYTICS & ESCALATION OVERVIEW ENDPOINTS
+# TEAM ANALYTICS & ESCALATION OVERVIEW ENDPOINTS (SQL AGGREGATIONS + SINGLE-FLIGHT)
 # =============================================================================
 
 @app.get("/api/analytics/overview", response_model=AnalyticsOverview)
-def get_analytics_overview(db: Session = Depends(get_db)):
-    """Computes aggregated quality metrics across all audited calls."""
-    total_calls = db.query(CallAuditModel).count()
-    if total_calls == 0:
-        return AnalyticsOverview(
-            totalCalls=0,
-            averageScore=0.0,
-            redFlagCount=0,
-            greenFlagCount=0,
-            escalationRate=0.0,
-            totalCommitments=0,
-            completedCommitments=0,
-            pendingCommitments=0,
-            completionRate=0.0,
-        )
+def get_analytics_overview(user: AuthUser = Depends(get_current_user)):
+    """Computes aggregated metrics directly in SQL with 30s single-flight stampede protection."""
+    def _compute() -> AnalyticsOverview:
+        db = SessionLocal()
+        try:
+            call_agg = (
+                db.query(
+                    func.count(CallAuditModel.id),
+                    func.coalesce(func.avg(CallAuditModel.overall_score), 0.0),
+                    func.coalesce(
+                        func.sum(case((CallAuditModel.tone_rating == "RED", 1), else_=0)),
+                        0,
+                    ),
+                )
+                .filter(CallAuditModel.org_id == user.org_id)
+                .first()
+            )
+            total_calls = int(call_agg[0] or 0) if call_agg else 0
+            avg_score = round(float(call_agg[1] or 0.0), 2) if call_agg and total_calls > 0 else 0.0
+            red_flags = int(call_agg[2] or 0) if call_agg else 0
+            green_flags = max(0, total_calls - red_flags)
+            escalation_rate = round((red_flags / total_calls) * 100.0, 1) if total_calls > 0 else 0.0
 
-    red_flags = db.query(CallAuditModel).filter(CallAuditModel.tone_rating == "RED").count()
-    green_flags = total_calls - red_flags
-    escalation_rate = round((red_flags / total_calls) * 100.0, 1)
+            comm_agg = (
+                db.query(
+                    func.count(CommitmentModel.id),
+                    func.coalesce(
+                        func.sum(case((CommitmentModel.status == "COMPLETED", 1), else_=0)),
+                        0,
+                    ),
+                )
+                .filter(CommitmentModel.org_id == user.org_id)
+                .first()
+            )
+            total_comm = int(comm_agg[0] or 0) if comm_agg else 0
+            completed_comm = int(comm_agg[1] or 0) if comm_agg else 0
+            pending_comm = max(0, total_comm - completed_comm)
+            completion_rate = round((completed_comm / total_comm) * 100.0, 1) if total_comm > 0 else 0.0
 
-    audits = db.query(CallAuditModel).all()
-    avg_score = round(sum(a.overall_score for a in audits) / total_calls, 2)
+            return AnalyticsOverview(
+                totalCalls=total_calls,
+                averageScore=avg_score,
+                redFlagCount=red_flags,
+                greenFlagCount=green_flags,
+                escalationRate=escalation_rate,
+                totalCommitments=total_comm,
+                completedCommitments=completed_comm,
+                pendingCommitments=pending_comm,
+                completionRate=completion_rate,
+            )
+        finally:
+            db.close()
 
-    total_comm = db.query(CommitmentModel).count()
-    completed_comm = db.query(CommitmentModel).filter(CommitmentModel.status == "COMPLETED").count()
-    pending_comm = total_comm - completed_comm
-    completion_rate = round((completed_comm / total_comm) * 100.0, 1) if total_comm > 0 else 0.0
+    return analytics_single_flight.get_or_compute(user.org_id, _compute)
 
-    return AnalyticsOverview(
-        totalCalls=total_calls,
-        averageScore=avg_score,
-        redFlagCount=red_flags,
-        greenFlagCount=green_flags,
-        escalationRate=escalation_rate,
-        totalCommitments=total_comm,
-        completedCommitments=completed_comm,
-        pendingCommitments=pending_comm,
-        completionRate=completion_rate,
-    )
 
 if __name__ == "__main__":
     import uvicorn

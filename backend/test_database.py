@@ -1,10 +1,10 @@
 import os
-from database import engine, Base, SessionLocal
+from database import engine, Base, SessionLocal, run_schema_migrations
 from models import CallAuditModel, TranscriptSegmentModel, CommitmentModel
 
 def run_db_tests():
-    print("[Test] Creating all tables...")
-    Base.metadata.create_all(bind=engine)
+    print("[Test] Running schema migrations & creating tables...")
+    run_schema_migrations()
     db = SessionLocal()
 
     try:

@@ -148,6 +148,7 @@ export async function uploadFileInChunks(
 
   const initRes = await fetch(`${apiBaseUrl}/api/uploads/init`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       filename: file.name,
@@ -194,6 +195,7 @@ export async function uploadFileInChunks(
 
         const chunkRes = await fetch(`${apiBaseUrl}/api/uploads/${uploadId}/chunk/${idx}`, {
           method: 'PUT',
+          credentials: 'include',
           body: fd,
         });
         if (!chunkRes.ok) {
@@ -223,6 +225,7 @@ export async function uploadFileInChunks(
   onStatus(97, 'Verifying checksum & assembling audio asset...');
   const completeRes = await fetch(`${apiBaseUrl}/api/uploads/${uploadId}/complete`, {
     method: 'POST',
+    credentials: 'include',
   });
   if (!completeRes.ok) {
     const errJson = await completeRes.json().catch(() => ({}));

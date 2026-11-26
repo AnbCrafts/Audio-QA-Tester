@@ -134,3 +134,35 @@ export interface JobProgressEvent {
   report?: AnalysisReport | null;
   errorMessage?: string | null;
 }
+
+export interface UserProfile {
+  userId: string;
+  email: string;
+  fullName: string;
+  orgId: string;
+  orgName: string;
+  role: 'ADMIN' | 'MEMBER';
+}
+
+export interface ModelUsageBreakdown {
+  model: string;
+  provider: string;
+  requests: number;
+  totalTokens: number;
+  costUsd: number;
+}
+
+export interface OrgTokenQuota {
+  orgId: string;
+  orgName: string;
+  usedToday: number;
+  dailyLimit: number;
+  remainingToday: number;
+  usagePct: number;
+  isExhausted: boolean;
+  renewsAtUtc: string;
+  retryAfterSeconds: number;
+  totalTokensAllTime: number;
+  totalCostUsdAllTime: number;
+  byModel: ModelUsageBreakdown[];
+}

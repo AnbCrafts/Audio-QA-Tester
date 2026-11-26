@@ -13,37 +13,51 @@ import {
   Search,
 } from 'lucide-react';
 import { ActionItem } from '../types';
+import { API_BASE_URL } from '../config';
 
 export const CommitmentsBoard: React.FC = () => {
   const [commitments, setCommitments] = useState<ActionItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETED'>('ALL');
   const [ownerFilter, setOwnerFilter] = useState<'ALL' | 'Rep' | 'Customer'>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const fetchCommitments = async () => {
-    setIsLoading(true);
+  const fetchCommitments = async (cursorToLoad: string | null = null) => {
+    if (cursorToLoad) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
-      let url = 'http://localhost:8000/api/commitments';
+      let url = `${API_BASE_URL}/api/commitments`;
       const params = new URLSearchParams();
+      params.append('limit', '24');
       if (statusFilter !== 'ALL') params.append('status', statusFilter);
       if (ownerFilter !== 'ALL') params.append('owner', ownerFilter);
-      if (params.toString()) url += `?${params.toString()}`;
+      if (cursorToLoad) params.append('cursor', cursorToLoad);
+      url += `?${params.toString()}`;
 
-      const res = await fetch(url);
+      const res = await fetch(url, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        setCommitments(data);
+        const items: ActionItem[] = Array.isArray(data) ? data : data.items || [];
+        setCommitments((prev) => (cursorToLoad ? [...prev, ...items] : items));
+        setNextCursor(data.nextCursor || null);
+        setHasMore(Boolean(data.hasMore));
       }
     } catch (err) {
       console.error('Failed to fetch commitments:', err);
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    fetchCommitments();
+    fetchCommitments(null);
   }, [statusFilter, ownerFilter]);
 
   const toggleStatus = async (id: string, currentStatus?: string) => {
@@ -51,8 +65,9 @@ export const CommitmentsBoard: React.FC = () => {
       currentStatus === 'COMPLETED' ? 'PENDING' : currentStatus === 'PENDING' ? 'IN_PROGRESS' : 'COMPLETED';
 
     try {
-      const res = await fetch(`http://localhost:8000/api/commitments/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/commitments/${id}`, {
         method: 'PATCH',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
       });
@@ -153,6 +168,7 @@ export const CommitmentsBoard: React.FC = () => {
           </p>
         </div>
       ) : (
+        <>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((item) => {
             const isCompleted = item.status === 'COMPLETED';
@@ -232,6 +248,19 @@ export const CommitmentsBoard: React.FC = () => {
             );
           })}
         </div>
+        {hasMore && nextCursor && (
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              disabled={isLoadingMore}
+              onClick={() => fetchCommitments(nextCursor)}
+              className="rounded-lg border border-slate-700 bg-slate-800/80 px-5 py-2 text-xs font-bold text-amber-300 hover:bg-slate-700 transition-all cursor-pointer disabled:opacity-50"
+            >
+              {isLoadingMore ? 'Loading more commitments...' : 'Load More Commitments'}
+            </button>
+          </div>
+        )}
+      </>
       )}
     </div>
   );
