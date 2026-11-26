@@ -1,11 +1,15 @@
 import os
+import re
+import uuid
 import json
-import shutil
+import hashlib
 import tempfile
 import asyncio
+from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
@@ -13,34 +17,57 @@ from sqlalchemy import desc
 # Load environment variables
 load_dotenv()
 
-from database import engine, Base, get_db
-from models import CallAuditModel, TranscriptSegmentModel, CommitmentModel
+from database import engine, Base, get_db, run_schema_migrations, SessionLocal
+from models import (
+    CallAuditModel,
+    TranscriptSegmentModel,
+    CommitmentModel,
+    AudioAssetModel,
+    UploadSessionModel,
+    AnalysisJobModel,
+)
 from schemas import (
     AnalysisConfigInput,
     AnalysisReport,
     CallHistoryItem,
     CommitmentStatusUpdate,
     AnalyticsOverview,
-    ActionItem,
+    UploadInitRequest,
+    UploadInitResponse,
+    UploadCompleteResponse,
+    AnalyzeAssetRequest,
+    AnalysisJobCreateResponse,
+    AnalysisJobStatusResponse,
 )
 from audio_service import analyze_call_with_ai, reanalyze_from_transcript
+from audio_chunker import probe_audio_duration
+from storage_service import (
+    CHUNK_SIZE_BYTES,
+    MAX_UPLOAD_BYTES,
+    UPLOAD_SESSION_TTL_SECONDS,
+    VALID_AUDIO_EXTENSIONS,
+    MIME_BY_EXT,
+    sanitize_filename,
+    validate_audio_magic_bytes,
+    storage_provider,
+)
+from job_worker import execute_analysis_job
 from cache_service import (
     compute_audio_hash,
     compute_config_hash,
-    compute_cache_key,
     get_cached_report,
     save_cached_report,
     get_audio_base_cache,
     save_audio_base_cache,
 )
 
-# Automatically create tables on startup (works seamlessly on SQLite & PostgreSQL)
-Base.metadata.create_all(bind=engine)
+# Automatically create new tables and run idempotent column migrations on startup
+run_schema_migrations()
 
 app = FastAPI(
     title="ScaleWorks AI - Enterprise Call Quality Intelligence Platform",
-    description="Backend API with SQLAlchemy DB persistence, Two-Tier Caching, and Dual-Engine AI analysis.",
-    version="2.0.0"
+    description="Backend API with SQLAlchemy DB persistence, Chunked Resumable Uploads, Async Map-Reduce AI Pipeline, and Two-Tier Caching.",
+    version="2.1.0"
 )
 
 # Enable CORS for local development
@@ -51,6 +78,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def cleanup_stale_uploads_on_startup():
+    """Removes expired temporary upload chunks older than TTL."""
+    storage_provider.cleanup_stale_tmp()
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        stale = (
+            db.query(UploadSessionModel)
+            .filter(UploadSessionModel.status == "UPLOADING", UploadSessionModel.expires_at < now)
+            .all()
+        )
+        for sess in stale:
+            storage_provider.delete_upload_tmp(sess.id)
+            sess.status = "EXPIRED"
+        if stale:
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Startup Cleanup Warning] {e}")
+    finally:
+        db.close()
 
 def _save_report_to_db(db: Session, report: AnalysisReport, audio_hash: Optional[str] = None) -> str:
     """Persists an analysis report, its transcript turns, and extracted action items to the database."""
@@ -175,6 +226,358 @@ def clear_cache():
                     pass
     return {"status": "cache_cleared", "deleted_files": cleared_count}
 
+# =============================================================================
+# CHUNKED RESUMABLE UPLOAD, RANGE STREAMING & ASYNC JOB ENDPOINTS
+# =============================================================================
+
+@app.post("/api/uploads/init", response_model=UploadInitResponse)
+def init_chunked_upload(payload: UploadInitRequest, db: Session = Depends(get_db)):
+    """
+    Initializes a 5 MB chunked resumable upload session after checking SHA-256 deduplication.
+    If the exact audio bytes already exist in AudioAssetModel, returns deduplicated=True (0 bytes uploaded).
+    """
+    clean_name = sanitize_filename(payload.filename)
+    ext = os.path.splitext(clean_name)[1].lower()
+    if ext not in VALID_AUDIO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported audio format.")
+
+    if payload.sizeBytes > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio file exceeds maximum supported limit of {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
+
+    audio_hash = payload.sha256.strip().lower()[:24]
+
+    # 1. Deduplication check against existing verified AudioAssets
+    existing_asset = db.query(AudioAssetModel).filter(AudioAssetModel.sha256 == audio_hash).first()
+    if existing_asset and os.path.isfile(storage_provider.get_local_path(existing_asset.storage_key)):
+        return UploadInitResponse(
+            deduplicated=True,
+            assetId=existing_asset.id,
+            chunkSizeBytes=CHUNK_SIZE_BYTES,
+            totalChunks=0,
+            receivedChunks=[],
+            durationSeconds=existing_asset.duration_seconds,
+        )
+
+    total_chunks = max(1, (payload.sizeBytes + CHUNK_SIZE_BYTES - 1) // CHUNK_SIZE_BYTES)
+
+    # 2. Resume an incomplete active session for the same file if available
+    now = datetime.utcnow()
+    existing_sess = (
+        db.query(UploadSessionModel)
+        .filter(
+            UploadSessionModel.sha256 == audio_hash,
+            UploadSessionModel.total_size_bytes == payload.sizeBytes,
+            UploadSessionModel.status == "UPLOADING",
+            UploadSessionModel.expires_at > now,
+        )
+        .order_by(desc(UploadSessionModel.created_at))
+        .first()
+    )
+    if existing_sess:
+        return UploadInitResponse(
+            deduplicated=False,
+            uploadId=existing_sess.id,
+            chunkSizeBytes=CHUNK_SIZE_BYTES,
+            totalChunks=existing_sess.total_chunks,
+            receivedChunks=list(existing_sess.received_chunks or []),
+        )
+
+    session = UploadSessionModel(
+        id=str(uuid.uuid4()),
+        filename=clean_name,
+        mime_type=payload.mimeType or MIME_BY_EXT.get(ext, "audio/mp4"),
+        total_size_bytes=payload.sizeBytes,
+        total_chunks=total_chunks,
+        received_chunks=[],
+        sha256=audio_hash,
+        status="UPLOADING",
+        expires_at=now + timedelta(seconds=UPLOAD_SESSION_TTL_SECONDS),
+    )
+    db.add(session)
+    db.commit()
+
+    return UploadInitResponse(
+        deduplicated=False,
+        uploadId=session.id,
+        chunkSizeBytes=CHUNK_SIZE_BYTES,
+        totalChunks=total_chunks,
+        receivedChunks=[],
+    )
+
+
+@app.put("/api/uploads/{upload_id}/chunk/{chunk_index}")
+async def upload_chunk(
+    upload_id: str,
+    chunk_index: int,
+    chunk: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Receives a single <=5 MB chunk via streaming I/O and validates magic bytes on chunk 0."""
+    session = db.query(UploadSessionModel).filter(UploadSessionModel.id == upload_id).first()
+    if not session or session.status != "UPLOADING":
+        raise HTTPException(status_code=404, detail="Upload session not found or inactive.")
+    if session.expires_at < datetime.utcnow():
+        storage_provider.delete_upload_tmp(upload_id)
+        session.status = "EXPIRED"
+        db.commit()
+        raise HTTPException(status_code=410, detail="Upload session expired. Please restart upload.")
+    if chunk_index < 0 or chunk_index >= session.total_chunks:
+        raise HTTPException(status_code=400, detail="Invalid chunk index.")
+
+    try:
+        written_bytes, leading_bytes = await storage_provider.save_chunk(upload_id, chunk_index, chunk)
+    except ValueError as ve:
+        raise HTTPException(status_code=413, detail=str(ve))
+
+    if chunk_index == 0:
+        is_valid, detected_fmt = validate_audio_magic_bytes(leading_bytes)
+        if not is_valid:
+            storage_provider.delete_upload_tmp(upload_id)
+            session.status = "EXPIRED"
+            db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail="File signature verification failed: uploaded content is not a valid audio file.",
+            )
+
+    received = set(session.received_chunks or [])
+    received.add(chunk_index)
+    session.received_chunks = sorted(received)
+    db.commit()
+
+    return {"uploadId": upload_id, "chunkIndex": chunk_index, "bytesWritten": written_bytes}
+
+
+@app.post("/api/uploads/{upload_id}/complete", response_model=UploadCompleteResponse)
+async def complete_chunked_upload(upload_id: str, db: Session = Depends(get_db)):
+    """Assembles uploaded chunks, verifies SHA-256 & magic bytes, and registers AudioAssetModel."""
+    session = db.query(UploadSessionModel).filter(UploadSessionModel.id == upload_id).first()
+    if not session or session.status != "UPLOADING":
+        raise HTTPException(status_code=404, detail="Upload session not found or already completed.")
+
+    received = set(session.received_chunks or [])
+    expected = set(range(session.total_chunks))
+    missing = sorted(expected - received)
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing upload chunks: {missing[:10]}")
+
+    asset_id = str(uuid.uuid4())
+    ext = os.path.splitext(session.filename)[1].lower()
+    storage_key, assembled_size, assembled_hash = await asyncio.to_thread(
+        storage_provider.assemble_chunks,
+        upload_id,
+        session.total_chunks,
+        asset_id,
+        ext,
+    )
+
+    if assembled_size != session.total_size_bytes:
+        storage_provider.delete_asset(storage_key)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Size mismatch after assembly: expected {session.total_size_bytes}, got {assembled_size}",
+        )
+
+    if assembled_hash != session.sha256:
+        storage_provider.delete_asset(storage_key)
+        raise HTTPException(status_code=400, detail="SHA-256 checksum mismatch after chunk assembly.")
+
+    final_path = storage_provider.get_local_path(storage_key)
+    with open(final_path, "rb") as f:
+        header = f.read(64)
+    is_valid, detected_fmt = validate_audio_magic_bytes(header)
+    if not is_valid:
+        storage_provider.delete_asset(storage_key)
+        raise HTTPException(status_code=400, detail="Assembled file failed audio magic-byte verification.")
+
+    duration_sec = await asyncio.to_thread(probe_audio_duration, final_path)
+
+    asset = AudioAssetModel(
+        id=asset_id,
+        sha256=assembled_hash,
+        original_filename=session.filename,
+        mime_type=session.mime_type,
+        detected_format=detected_fmt or session.mime_type,
+        size_bytes=assembled_size,
+        duration_seconds=duration_sec,
+        storage_key=storage_key,
+    )
+    db.add(asset)
+    session.status = "COMPLETED"
+    session.asset_id = asset_id
+    db.commit()
+
+    return UploadCompleteResponse(
+        assetId=asset_id,
+        sha256=assembled_hash,
+        sizeBytes=assembled_size,
+        durationSeconds=duration_sec,
+        detectedFormat=asset.detected_format,
+        audioUrl=f"/api/assets/{asset_id}/stream",
+    )
+
+
+@app.get("/api/assets/{asset_id}/stream")
+def stream_audio_asset(asset_id: str, request: Request, db: Session = Depends(get_db)):
+    """
+    Streams persisted audio with HTTP 206 Partial Content byte-range support so
+    HTML5 <audio> scrubbing works reliably for 1-hour+ files even after page reloads.
+    """
+    asset = db.query(AudioAssetModel).filter(AudioAssetModel.id == asset_id).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Audio asset not found.")
+
+    file_path = storage_provider.get_local_path(asset.storage_key)
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Stored audio file missing on disk.")
+
+    file_size = os.path.getsize(file_path)
+    content_type = asset.detected_format or asset.mime_type or "audio/mp4"
+    range_header = request.headers.get("range")
+
+    if range_header:
+        m = re.match(r"bytes=(\d*)-(\d*)", range_header.strip())
+        if not m:
+            raise HTTPException(status_code=416, detail="Invalid Range header")
+        start = int(m.group(1)) if m.group(1) else 0
+        end = int(m.group(2)) if m.group(2) else file_size - 1
+        end = min(end, file_size - 1)
+        if start > end or start >= file_size:
+            raise HTTPException(status_code=416, detail="Requested range not satisfiable")
+
+        chunk_len = end - start + 1
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(chunk_len),
+        }
+        return StreamingResponse(
+            storage_provider.iter_file_range(asset.storage_key, start, end),
+            status_code=206,
+            media_type=content_type,
+            headers=headers,
+        )
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(file_size),
+    }
+    return StreamingResponse(
+        storage_provider.iter_file_range(asset.storage_key, 0, file_size - 1),
+        status_code=200,
+        media_type=content_type,
+        headers=headers,
+    )
+
+
+@app.post("/api/analyze/async", status_code=202, response_model=AnalysisJobCreateResponse)
+async def start_async_analysis(payload: AnalyzeAssetRequest, db: Session = Depends(get_db)):
+    """
+    Queues an asynchronous analysis job (returns 202 Accepted immediately).
+    Supports both initial analysis and zero-reupload re-analysis via assetId.
+    """
+    asset = db.query(AudioAssetModel).filter(AudioAssetModel.id == payload.assetId).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Audio asset not found.")
+
+    config_dict = payload.config.model_dump()
+    config_hash = compute_config_hash(config_dict)
+    job = AnalysisJobModel(
+        id=str(uuid.uuid4()),
+        asset_id=asset.id,
+        audio_hash=asset.sha256,
+        config_hash=config_hash,
+        config_json=config_dict,
+        status="QUEUED",
+        stage_message="Queued for processing...",
+        progress_pct=2,
+        total_chunks=1,
+        completed_chunks=0,
+    )
+    db.add(job)
+    db.commit()
+
+    asyncio.create_task(execute_analysis_job(job.id))
+
+    return AnalysisJobCreateResponse(jobId=job.id, status="QUEUED", cached=False)
+
+
+@app.get("/api/jobs/{job_id}", response_model=AnalysisJobStatusResponse)
+def get_job_status(job_id: str, db: Session = Depends(get_db)):
+    job = db.query(AnalysisJobModel).filter(AnalysisJobModel.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    report_obj = AnalysisReport(**job.result_json) if job.result_json else None
+    return AnalysisJobStatusResponse(
+        jobId=job.id,
+        assetId=job.asset_id,
+        status=job.status,
+        stageMessage=job.stage_message,
+        progressPct=job.progress_pct,
+        totalChunks=job.total_chunks,
+        completedChunks=job.completed_chunks,
+        callId=job.call_id,
+        report=report_obj,
+        errorMessage=job.error_message,
+    )
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def stream_job_events(job_id: str, request: Request):
+    """Server-Sent Events (SSE) endpoint streaming live job stage & chunk progress."""
+    async def event_generator():
+        last_signature = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            db = SessionLocal()
+            try:
+                job = db.query(AnalysisJobModel).filter(AnalysisJobModel.id == job_id).first()
+                if not job:
+                    yield f"data: {json.dumps({'status': 'FAILED', 'errorMessage': 'Job not found'})}\n\n"
+                    break
+
+                payload = {
+                    "jobId": job.id,
+                    "assetId": job.asset_id,
+                    "status": job.status,
+                    "stageMessage": job.stage_message,
+                    "progressPct": job.progress_pct,
+                    "totalChunks": job.total_chunks,
+                    "completedChunks": job.completed_chunks,
+                    "callId": job.call_id,
+                    "errorMessage": job.error_message,
+                }
+                if job.status == "COMPLETED" and job.result_json:
+                    payload["report"] = job.result_json
+
+                sig = (job.status, job.progress_pct, job.completed_chunks, job.stage_message)
+                if sig != last_signature:
+                    last_signature = sig
+                    yield f"data: {json.dumps(payload)}\n\n"
+
+                if job.status in ("COMPLETED", "FAILED"):
+                    break
+            finally:
+                db.close()
+
+            await asyncio.sleep(0.6)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/api/analyze", response_model=AnalysisReport)
 async def analyze_call(
     file: UploadFile = File(...),
@@ -182,12 +585,11 @@ async def analyze_call(
     db: Session = Depends(get_db),
 ):
     # Validate file type (.m4a preferred)
-    filename = file.filename or "recording.m4a"
-    valid_exts = (".m4a", ".mp3", ".wav", ".ogg", ".aac")
-    if not any(filename.lower().endswith(ext) for ext in valid_exts):
+    filename = sanitize_filename(file.filename or "recording.m4a")
+    if not any(filename.lower().endswith(ext) for ext in VALID_AUDIO_EXTENSIONS):
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported audio format. Please upload an .m4a audio file."
+            detail="Unsupported audio format. Please upload an .m4a audio file."
         )
 
     # Parse config JSON
@@ -197,57 +599,66 @@ async def analyze_call(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid configuration parameters: {e}")
 
-    # Read uploaded file content into memory for caching and temporary persistence
-    content = await file.read()
-    file_size_mb = f"{len(content) / (1024 * 1024):.2f} MB"
+    # Stream uploaded file to disk in 64 KB chunks (no whole-file RAM buffering!)
+    suffix = os.path.splitext(filename)[1] or ".m4a"
+    hasher = hashlib.sha256()
+    total_bytes = 0
+    leading = bytearray()
 
-    audio_hash = compute_audio_hash(content)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        tmp_path = tmp_file.name
+        while True:
+            piece = await file.read(65536)
+            if not piece:
+                break
+            total_bytes += len(piece)
+            if total_bytes > MAX_UPLOAD_BYTES:
+                tmp_file.close()
+                os.remove(tmp_path)
+                raise HTTPException(status_code=413, detail="File exceeds 500 MB limit.")
+            if len(leading) < 64:
+                leading.extend(piece[: 64 - len(leading)])
+            hasher.update(piece)
+            tmp_file.write(piece)
+
+    is_valid, _ = validate_audio_magic_bytes(bytes(leading))
+    if not is_valid:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(status_code=400, detail="Invalid audio signature (magic-byte check failed).")
+
+    file_size_mb = f"{total_bytes / (1024 * 1024):.2f} MB"
+    audio_hash = hasher.hexdigest()[:24]
     config_hash = compute_config_hash(config_dict)
     cache_key = f"{audio_hash}_{config_hash}"
 
-    # =========================================================================
-    # Tier 2 Cache Check: Full report match (Instant 0ms retrieval)
-    # =========================================================================
-    cached_data = get_cached_report(cache_key)
-    if cached_data and cached_data.get("transcript") and len(cached_data["transcript"]) > 0:
-        print(f"[Tier-2 Cache Hit] Returning full cached analysis in 0ms for key: {cache_key}")
-        cached_data["cached"] = True
-        report = AnalysisReport(**cached_data)
-        # Ensure it exists in DB
-        _save_report_to_db(db, report, audio_hash=audio_hash)
-        return report
-
-    # =========================================================================
-    # Tier 1 Cache Check: Audio base transcript exists! (~300ms fast re-eval)
-    # =========================================================================
-    audio_base = get_audio_base_cache(audio_hash)
-    if audio_base and audio_base.get("transcript") and len(audio_base["transcript"]) > 0:
-        print(f"[Tier-1 Audio Cache Hit] Found existing verified transcript for audio_{audio_hash}!")
-        print(f"[Tier-1 Fast Reasoning] Re-evaluating tone against new config in ~300ms...")
-        try:
-            fast_report = await asyncio.to_thread(
-                reanalyze_from_transcript,
-                audio_base=audio_base,
-                filename=filename,
-                file_size_str=file_size_mb,
-                config=parsed_config
-            )
-            if fast_report.transcript and len(fast_report.transcript) > 0:
-                save_cached_report(cache_key, fast_report.model_dump())
-                _save_report_to_db(db, fast_report, audio_hash=audio_hash)
-            return fast_report
-        except Exception as tier1_err:
-            print(f"[Tier-1 Fallback] Fast re-eval hit issue ({tier1_err}), falling back to full audio pipeline...")
-
-    # =========================================================================
-    # Tier 1 Miss (Cold Run): Full Multimodal Audio Processing (~3.5s)
-    # =========================================================================
-    suffix = os.path.splitext(filename)[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
-        tmp_path = tmp_file.name
-        tmp_file.write(content)
-
     try:
+        # Tier 2 Cache Check
+        cached_data = get_cached_report(cache_key)
+        if cached_data and cached_data.get("transcript"):
+            cached_data["cached"] = True
+            report = AnalysisReport(**cached_data)
+            _save_report_to_db(db, report, audio_hash=audio_hash)
+            return report
+
+        # Tier 1 Cache Check
+        audio_base = get_audio_base_cache(audio_hash)
+        if audio_base and audio_base.get("transcript"):
+            try:
+                fast_report = await asyncio.to_thread(
+                    reanalyze_from_transcript,
+                    audio_base=audio_base,
+                    filename=filename,
+                    file_size_str=file_size_mb,
+                    config=parsed_config
+                )
+                if fast_report.transcript:
+                    save_cached_report(cache_key, fast_report.model_dump())
+                    _save_report_to_db(db, fast_report, audio_hash=audio_hash)
+                return fast_report
+            except Exception as tier1_err:
+                print(f"[Tier-1 Fallback] Fast re-eval hit issue ({tier1_err}), falling back to full audio pipeline...")
+
         report = await asyncio.to_thread(
             analyze_call_with_ai,
             file_path=tmp_path,
@@ -255,16 +666,13 @@ async def analyze_call(
             file_size_str=file_size_mb,
             config=parsed_config
         )
-        if report.transcript and len(report.transcript) > 0:
-            # 1. Save to Tier 1 Audio Base Cache
+        if report.transcript:
             save_audio_base_cache(audio_hash, {
                 "transcript": [seg.model_dump() for seg in report.transcript],
                 "duration": report.duration,
                 "callMetadata": report.callMetadata.model_dump() if report.callMetadata else None
             })
-            # 2. Save to Tier 2 Config Cache
             save_cached_report(cache_key, report.model_dump())
-            # 3. Save to Database
             _save_report_to_db(db, report, audio_hash=audio_hash)
         return report
     except Exception as e:

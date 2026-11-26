@@ -105,6 +105,7 @@ export interface CallMetadata {
 
 export interface AnalysisReport {
   callId: string;
+  assetId?: string | null;
   fileName: string;
   fileSize: string;
   duration: string;
@@ -119,4 +120,17 @@ export interface AnalysisReport {
   engineUsed?: string;
   status: 'processing' | 'completed' | 'error';
   errorMessage?: string;
+}
+
+export interface JobProgressEvent {
+  jobId: string;
+  assetId: string;
+  status: string;
+  stageMessage: string;
+  progressPct: number;
+  totalChunks: number;
+  completedChunks: number;
+  callId?: string | null;
+  report?: AnalysisReport | null;
+  errorMessage?: string | null;
 }

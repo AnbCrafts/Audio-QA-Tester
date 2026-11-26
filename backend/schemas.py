@@ -69,6 +69,8 @@ class CallMetadata(BaseModel):
 
 class AnalysisReport(BaseModel):
     callId: str
+    assetId: Optional[str] = None
+    audioUrl: Optional[str] = None
     fileName: str
     fileSize: str
     duration: str
@@ -80,7 +82,58 @@ class AnalysisReport(BaseModel):
     configUsed: AnalysisConfigInput
     callMetadata: Optional[CallMetadata] = None
     cached: Optional[bool] = False
-    engineUsed: Optional[str] = "Gemini 3.5 Flash"
+    engineUsed: Optional[str] = "Gemini Flash"
+    errorMessage: Optional[str] = None
+
+
+class UploadInitRequest(BaseModel):
+    filename: str
+    mimeType: str = "audio/mp4"
+    sizeBytes: int = Field(gt=0)
+    sha256: str = Field(min_length=16, max_length=128)
+
+
+class UploadInitResponse(BaseModel):
+    deduplicated: bool
+    uploadId: Optional[str] = None
+    assetId: Optional[str] = None
+    chunkSizeBytes: int
+    totalChunks: int
+    receivedChunks: List[int] = Field(default_factory=list)
+    durationSeconds: Optional[float] = None
+
+
+class UploadCompleteResponse(BaseModel):
+    assetId: str
+    sha256: str
+    sizeBytes: int
+    durationSeconds: float
+    detectedFormat: str
+    audioUrl: str
+
+
+class AnalyzeAssetRequest(BaseModel):
+    assetId: str
+    config: AnalysisConfigInput
+
+
+class AnalysisJobCreateResponse(BaseModel):
+    jobId: str
+    status: str
+    cached: bool = False
+    report: Optional[AnalysisReport] = None
+
+
+class AnalysisJobStatusResponse(BaseModel):
+    jobId: str
+    assetId: str
+    status: str
+    stageMessage: str
+    progressPct: int
+    totalChunks: int
+    completedChunks: int
+    callId: Optional[str] = None
+    report: Optional[AnalysisReport] = None
     errorMessage: Optional[str] = None
 
 class CallHistoryItem(BaseModel):

@@ -35,13 +35,14 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Parse durationStr (e.g. "01:54") to seconds as fallback
+  // Parse durationStr (e.g. "01:54" or "01:05:12") to seconds as fallback
   const parseDurationStringToSeconds = (str: string): number => {
-    const parts = str.split(':');
+    const parts = str.split(':').map((p) => parseInt(p, 10) || 0);
     if (parts.length === 2) {
-      const minutes = parseInt(parts[0], 10) || 0;
-      const seconds = parseInt(parts[1], 10) || 0;
-      return minutes * 60 + seconds;
+      return parts[0] * 60 + parts[1];
+    }
+    if (parts.length === 3) {
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
     }
     return 120;
   };
@@ -116,8 +117,13 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   };
 
   const formatSeconds = (sec: number): string => {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
+    const safe = Math.max(0, Math.floor(sec));
+    const h = Math.floor(safe / 3600);
+    const m = Math.floor((safe % 3600) / 60);
+    const s = safe % 60;
+    if (h > 0) {
+      return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 

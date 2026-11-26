@@ -20,6 +20,7 @@ interface UploadDropzoneProps {
   onFileUpload: (file: File) => void;
   isProcessing: boolean;
   processingStep: string;
+  progressPct?: number;
   activePreset?: BusinessPreset;
   activeSensitivity?: SensitivityLevel;
   onOpenConfig?: () => void;
@@ -31,6 +32,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   onFileUpload,
   isProcessing,
   processingStep,
+  progressPct = 0,
   activePreset,
   activeSensitivity = 'balanced',
   onOpenConfig,
@@ -44,9 +46,9 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   // Derive active progress stage (0, 1, 2, 3) from processingStep text
   const getActiveStageIndex = () => {
     const s = processingStep.toLowerCase();
-    if (s.includes('extracting') || s.includes('commitment')) return 3;
-    if (s.includes('isolating') || s.includes('scoring') || s.includes('etiquette')) return 2;
-    if (s.includes('transcribing') || s.includes('turns') || s.includes('diarization')) return 1;
+    if (s.includes('completed') || s.includes('extracting') || s.includes('commitment')) return 3;
+    if (s.includes('merging') || s.includes('auditing') || s.includes('re-evaluating') || s.includes('isolating') || s.includes('scoring')) return 2;
+    if (s.includes('splitting') || s.includes('segment') || s.includes('transcribing') || s.includes('turns') || s.includes('diarization')) return 1;
     return 0;
   };
 
@@ -80,8 +82,8 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
       return;
     }
 
-    if (file.size > 25 * 1024 * 1024) {
-      setErrorMsg('Audio file is larger than 25MB limit.');
+    if (file.size > 500 * 1024 * 1024) {
+      setErrorMsg('Audio file is larger than 500MB limit.');
       return;
     }
 
@@ -140,7 +142,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
             </span>
           )}
           <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
-            Max 25MB
+            Max 500MB (1 hr+)
           </span>
         </div>
       </div>
@@ -148,7 +150,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
       {/* When Processing: Multi-Stage Animated Stepper */}
       {isProcessing ? (
         <div className="rounded-xl border border-amber-500/30 bg-slate-950/70 p-6">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3.5 mb-5">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3.5 mb-4">
             <div className="flex items-center gap-3">
               <Loader2 className="h-6 w-6 text-amber-400 animate-spin" />
               <div>
@@ -161,9 +163,18 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
               </div>
             </div>
             <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-400 border border-amber-500/20">
-              <Zap className="h-3 w-3" /> Step {activeStage + 1} of 4
+              <Zap className="h-3 w-3" /> {progressPct > 0 ? `${progressPct}% • ` : ''}Step {activeStage + 1} of 4
             </span>
           </div>
+
+          {progressPct > 0 && (
+            <div className="mb-4 h-2 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all duration-300"
+                style={{ width: `${Math.min(100, Math.max(2, progressPct))}%` }}
+              />
+            </div>
+          )}
 
           {/* 4 Interactive Stages Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

@@ -14,6 +14,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { CallHistoryItem } from '../types';
+import { API_BASE_URL } from '../config';
 
 interface CallHistoryViewProps {
   onSelectCall: (callId: string) => void;
@@ -30,7 +31,7 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
     setIsLoading(true);
     setError(null);
     try {
-      let url = 'http://localhost:8000/api/history?limit=100';
+      let url = `${API_BASE_URL}/api/history?limit=100`;
       if (toneFilter !== 'ALL') url += `&tone=${toneFilter}`;
       if (searchTerm.trim()) url += `&search=${encodeURIComponent(searchTerm.trim())}`;
 
@@ -58,7 +59,7 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
     e.stopPropagation();
     if (!window.confirm('Delete this historical audit from database?')) return;
     try {
-      await fetch(`http://localhost:8000/api/history/${id}`, { method: 'DELETE' });
+      await fetch(`${API_BASE_URL}/api/history/${id}`, { method: 'DELETE' });
       setHistory((prev) => prev.filter((item) => item.id !== id));
     } catch (err) {
       alert('Failed to delete call record.');

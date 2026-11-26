@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar, AppNavTab } from './components/Navbar';
 import { UploadDropzone } from './components/UploadDropzone';
 import { ToneCard } from './components/ToneCard';
@@ -10,8 +10,9 @@ import { CallHistoryView } from './components/CallHistoryView';
 import { CommitmentsBoard } from './components/CommitmentsBoard';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { BUSINESS_PRESETS } from './data/presets';
-import { AnalysisConfig, AnalysisReport } from './types';
+import { AnalysisConfig, AnalysisReport, JobProgressEvent } from './types';
 import { API_BASE_URL } from './config';
+import { uploadFileInChunks } from './utils/uploadClient';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -43,9 +44,11 @@ export const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
+  const [progressPct, setProgressPct] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [seekTime, setSeekTime] = useState<number | null>(null);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Check backend health on mount
   useEffect(() => {
@@ -72,58 +75,124 @@ export const App: React.FC = () => {
   const activePreset =
     BUSINESS_PRESETS.find((p) => p.id === config.presetId) || BUSINESS_PRESETS[0];
 
+  const closeActiveEventSource = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  };
+
+  const resolveAudioUrl = (rawUrl?: string | null, fallbackUrl?: string | null) => {
+    if (!rawUrl) return fallbackUrl || null;
+    if (rawUrl.startsWith('/api/')) return `${API_BASE_URL}${rawUrl}`;
+    return rawUrl;
+  };
+
+  const subscribeToJobProgress = (
+    jobId: string,
+    fallbackAudioUrl: string,
+    configToUse: AnalysisConfig
+  ) => {
+    closeActiveEventSource();
+    const es = new EventSource(`${API_BASE_URL}/api/jobs/${jobId}/events`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data: JobProgressEvent = JSON.parse(event.data);
+        setProcessingStep(data.stageMessage || 'Processing audio...');
+        // Map worker 0..100% into 25..100% after upload phase
+        setProgressPct(Math.max(25, Math.min(100, 25 + Math.round((data.progressPct || 0) * 0.75))));
+
+        if (data.status === 'COMPLETED' && data.report) {
+          closeActiveEventSource();
+          const report: AnalysisReport = {
+            ...data.report,
+            audioUrl: resolveAudioUrl(data.report.audioUrl, fallbackAudioUrl),
+            configUsed: configToUse,
+          };
+          setCurrentReport(report);
+          setProgressPct(100);
+          setIsProcessing(false);
+        } else if (data.status === 'FAILED') {
+          closeActiveEventSource();
+          setErrorMessage(data.errorMessage || 'Analysis job failed.');
+          setIsProcessing(false);
+        }
+      } catch (parseErr) {
+        console.error('Failed to parse SSE event:', parseErr);
+      }
+    };
+
+    es.onerror = async () => {
+      closeActiveEventSource();
+      try {
+        const pollRes = await fetch(`${API_BASE_URL}/api/jobs/${jobId}`);
+        if (pollRes.ok) {
+          const pollData: JobProgressEvent = await pollRes.json();
+          if (pollData.status === 'COMPLETED' && pollData.report) {
+            const report: AnalysisReport = {
+              ...pollData.report,
+              audioUrl: resolveAudioUrl(pollData.report.audioUrl, fallbackAudioUrl),
+              configUsed: configToUse,
+            };
+            setCurrentReport(report);
+            setIsProcessing(false);
+            return;
+          }
+          if (pollData.status === 'FAILED') {
+            setErrorMessage(pollData.errorMessage || 'Analysis job failed.');
+            setIsProcessing(false);
+            return;
+          }
+        }
+      } catch {
+        // fall through to generic SSE disconnect error
+      }
+      setErrorMessage('Lost live connection to analysis job. Please check Call History or retry.');
+      setIsProcessing(false);
+    };
+  };
+
   const handleFileUpload = async (file: File) => {
     setActiveFile(file);
     setStagedFile(null);
     setIsProcessing(true);
+    setProgressPct(2);
     setErrorMessage(null);
     setCurrentReport(null);
-    setProcessingStep('Sending audio to AI engine for transcription & speaker diarization...');
+    setProcessingStep('Fingerprinting & preparing chunked upload...');
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('config', JSON.stringify(config));
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 300000);
-
-      const step1Timer = setTimeout(() => {
-        setProcessingStep('Transcribing audio turns (multilingual Hindi/Hinglish/English)...');
-      }, 2500);
-
-      const step2Timer = setTimeout(() => {
-        setProcessingStep('Isolating Sales Rep dialogue & scoring tone against rubric...');
-      }, 8000);
-
-      const step3Timer = setTimeout(() => {
-        setProcessingStep('Extracting evidence-backed commitments & action items...');
-      }, 16000);
-
-      const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
+      const uploadResult = await uploadFileInChunks(file, API_BASE_URL, (uploadPct, stepText) => {
+        // Upload phase fills 0..25% of total bar; AI worker fills 25..100%
+        setProgressPct(Math.max(2, Math.round(uploadPct * 0.25)));
+        setProcessingStep(stepText);
       });
 
-      clearTimeout(timeoutId);
-      clearTimeout(step1Timer);
-      clearTimeout(step2Timer);
-      clearTimeout(step3Timer);
+      setProgressPct(26);
+      setProcessingStep('Queueing background AI analysis job...');
 
-      if (resp.ok) {
-        const report: AnalysisReport = await resp.json();
-        report.audioUrl = URL.createObjectURL(file);
-        report.configUsed = config;
-        setCurrentReport(report);
-        setIsProcessing(false);
-      } else {
+      const resp = await fetch(`${API_BASE_URL}/api/analyze/async`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assetId: uploadResult.assetId,
+          config,
+        }),
+      });
+
+      if (!resp.ok) {
         const errJson = await resp.json().catch(() => ({}));
-        throw new Error(errJson.detail || `Server error (${resp.status}): Failed to analyze call.`);
+        throw new Error(errJson.detail || `Server error (${resp.status}): Failed to queue analysis.`);
       }
+
+      const jobData = await resp.json();
+      subscribeToJobProgress(jobData.jobId, uploadResult.audioUrl, config);
     } catch (err: any) {
       console.error('Analysis error:', err);
-      setErrorMessage(err.message || 'Failed to connect to backend analysis service.');
+      closeActiveEventSource();
+      setErrorMessage(err.message || 'Failed to upload or analyze call recording.');
       setIsProcessing(false);
     }
   };
@@ -131,6 +200,7 @@ export const App: React.FC = () => {
   const handleSelectHistoricalCall = async (callId: string) => {
     try {
       setIsProcessing(true);
+      setProgressPct(50);
       setErrorMessage(null);
       setProcessingStep('Retrieving verified call audit from database...');
       const res = await fetch(`${API_BASE_URL}/api/history/${callId}`);
@@ -138,54 +208,59 @@ export const App: React.FC = () => {
       const data: AnalysisReport = await res.json();
       data.status = 'completed';
       data.configUsed = config;
-      data.audioUrl = `/${data.fileName}`;
+      data.audioUrl = resolveAudioUrl(data.audioUrl, `/${data.fileName}`);
       setCurrentReport(data);
       setActiveTab('auditor');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to retrieve call from database.');
     } finally {
       setIsProcessing(false);
+      setProgressPct(0);
     }
   };
 
   const handleReanalyze = async (newConfig?: AnalysisConfig) => {
-    if (!activeFile) {
+    const configToUse = newConfig || config;
+    const existingAssetId = currentReport?.assetId;
+
+    if (!existingAssetId && !activeFile) {
       setIsConfigOpen(false);
       return;
     }
 
-    const configToUse = newConfig || config;
+    if (!existingAssetId && activeFile) {
+      setIsConfigOpen(false);
+      await handleFileUpload(activeFile);
+      return;
+    }
+
     setIsProcessing(true);
+    setProgressPct(30);
     setErrorMessage(null);
-    setProcessingStep('Re-analyzing cached call against updated rubric (~350ms)...');
+    setProcessingStep('Re-analyzing stored audio against updated rubric (0 bytes re-uploaded)...');
     setIsConfigOpen(false);
 
     try {
-      const formData = new FormData();
-      formData.append('file', activeFile);
-      formData.append('config', JSON.stringify(configToUse));
-
-      const resp = await fetch(`${API_BASE_URL}/api/analyze`, {
+      const resp = await fetch(`${API_BASE_URL}/api/analyze/async`, {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          assetId: existingAssetId,
+          config: configToUse,
+        }),
       });
 
-      if (resp.ok) {
-        const report: AnalysisReport = await resp.json();
-        if (currentReport?.audioUrl) {
-          report.audioUrl = currentReport.audioUrl;
-        } else {
-          report.audioUrl = URL.createObjectURL(activeFile);
-        }
-        report.configUsed = configToUse;
-        setCurrentReport(report);
-        setIsProcessing(false);
-      } else {
+      if (!resp.ok) {
         const errJson = await resp.json().catch(() => ({}));
         throw new Error(errJson.detail || `Server error (${resp.status}): Failed to re-analyze call.`);
       }
+
+      const jobData = await resp.json();
+      const streamUrl = `${API_BASE_URL}/api/assets/${existingAssetId}/stream`;
+      subscribeToJobProgress(jobData.jobId, streamUrl, configToUse);
     } catch (err: any) {
       console.error('Re-analysis error:', err);
+      closeActiveEventSource();
       setErrorMessage(err.message || 'Failed to re-analyze recording with updated settings.');
       setIsProcessing(false);
     }
@@ -196,10 +271,11 @@ export const App: React.FC = () => {
       setSeekTime(explicitSeconds);
       return;
     }
-    const parts = timestampStr.split(':');
+    const parts = timestampStr.split(':').map((p) => parseInt(p, 10) || 0);
     if (parts.length === 2) {
-      const seconds = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
-      setSeekTime(seconds);
+      setSeekTime(parts[0] * 60 + parts[1]);
+    } else if (parts.length === 3) {
+      setSeekTime(parts[0] * 3600 + parts[1] * 60 + parts[2]);
     }
   };
 
@@ -237,7 +313,8 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      if (currentReport?.audioUrl) {
+      closeActiveEventSource();
+      if (currentReport?.audioUrl && currentReport.audioUrl.startsWith('blob:')) {
         URL.revokeObjectURL(currentReport.audioUrl);
       }
     };
@@ -264,6 +341,7 @@ export const App: React.FC = () => {
               onFileUpload={handleFileUpload}
               isProcessing={isProcessing}
               processingStep={processingStep}
+              progressPct={progressPct}
               activePreset={activePreset}
               activeSensitivity={config.sensitivity}
               onOpenConfig={() => setIsConfigOpen(true)}
@@ -385,7 +463,7 @@ export const App: React.FC = () => {
         onClose={() => setIsConfigOpen(false)}
         config={config}
         onSaveConfig={(newConfig) => setConfig(newConfig)}
-        hasLoadedCall={!!activeFile}
+        hasLoadedCall={!!activeFile || !!currentReport?.assetId}
         onReanalyzeLoadedCall={handleReanalyze}
       />
 

@@ -37,9 +37,11 @@ class CallAuditModel(Base):
     etiquette_notes = Column(JSON, default=list)
     evidence_quotes = Column(JSON, default=list)
     audio_hash = Column(String, index=True, nullable=True)
+    asset_id = Column(String, ForeignKey("audio_assets.id"), index=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
+    asset = relationship("AudioAssetModel")
     transcripts = relationship(
         "TranscriptSegmentModel",
         back_populates="call",
@@ -57,6 +59,8 @@ class CallAuditModel(Base):
         """Converts database model back into the full AnalysisReport schema format."""
         return {
             "callId": self.id,
+            "assetId": self.asset_id,
+            "audioUrl": f"/api/assets/{self.asset_id}/stream" if self.asset_id else None,
             "fileName": self.filename,
             "fileSize": self.file_size,
             "duration": self.duration,
@@ -143,3 +147,72 @@ class CommitmentModel(Base):
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class AudioAssetModel(Base):
+    """Stores persistent audio file metadata & storage keys (no raw blobs in DB)."""
+    __tablename__ = "audio_assets"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    sha256 = Column(String, index=True, nullable=False)
+    original_filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=False)
+    detected_format = Column(String, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    duration_seconds = Column(Float, default=0.0)
+    storage_key = Column(String, unique=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UploadSessionModel(Base):
+    """Tracks resumable 5 MB chunked upload sessions."""
+    __tablename__ = "upload_sessions"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=False)
+    total_size_bytes = Column(Integer, nullable=False)
+    total_chunks = Column(Integer, nullable=False)
+    received_chunks = Column(JSON, default=list)
+    sha256 = Column(String, index=True, nullable=False)
+    status = Column(String, default="UPLOADING")  # "UPLOADING" | "COMPLETED" | "EXPIRED"
+    asset_id = Column(String, ForeignKey("audio_assets.id"), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AnalysisJobModel(Base):
+    """Tracks asynchronous audio analysis jobs & live SSE progress."""
+    __tablename__ = "analysis_jobs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    asset_id = Column(String, ForeignKey("audio_assets.id"), nullable=False, index=True)
+    audio_hash = Column(String, index=True, nullable=False)
+    config_hash = Column(String, index=True, nullable=False)
+    config_json = Column(JSON, default=dict)
+    status = Column(String, default="QUEUED", index=True)
+    stage_message = Column(String, default="Queued for processing...")
+    progress_pct = Column(Integer, default=0)
+    total_chunks = Column(Integer, default=1)
+    completed_chunks = Column(Integer, default=0)
+    call_id = Column(String, nullable=True)
+    result_json = Column(JSON, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AudioChunkResultModel(Base):
+    """Persists per-chunk Gemini transcription/notes for fault-tolerant resumption."""
+    __tablename__ = "audio_chunk_results"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    job_id = Column(String, ForeignKey("analysis_jobs.id"), nullable=False, index=True)
+    audio_hash = Column(String, index=True, nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    start_seconds = Column(Float, default=0.0)
+    end_seconds = Column(Float, default=0.0)
+    transcript_json = Column(JSON, default=list)
+    acoustic_notes = Column(Text, default="")
+    status = Column(String, default="PENDING")  # "PENDING" | "COMPLETED" | "FAILED"
+    created_at = Column(DateTime, default=datetime.utcnow)
