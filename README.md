@@ -56,6 +56,30 @@ The platform includes a production **SQLAlchemy ORM layer**:
 
 ---
 
+## ⚡ System Design & Production Scaling (`anb_office`)
+
+To scale `Audio-QA-Tester` from a single-user prototype to a multi-tenant, production-resilient platform capable of handling **500 MB / 1-hour+ recordings, heavy traffic spikes, AI outages, and strict tenant quotas**, the following architectural upgrades were engineered:
+
+| System Design Issue | What Was Implemented to Solve It | Key Modules & Design Spec |
+| :--- | :--- | :--- |
+| **1. Large File Uploads & 1-Hour+ Audio Processing** | • **5 MB Chunked Resumable Uploads** (`POST /api/uploads/init` → `PUT /chunk/{idx}` → `/complete`) up to **500 MB** with streaming disk I/O (zero full-file RAM buffering) and incremental browser `SHA-256` deduplication (`uploadClient.ts`).<br>• **Magic-Byte Signature Verification** on Chunk `0` (blocks renamed `.exe`/`.html`/`.pdf`).<br>• **HTTP `206 Partial Content` Range Streaming** (`/api/assets/{id}/stream`) for persistent `<audio>` scrubbing across reloads (`HH:MM:SS` supported) and **0-byte re-upload re-analysis** via `assetId`.<br>• **Async Job Worker (`202 Accepted`) + SSE Progress** (`/api/jobs/{id}/events`) eliminating 60s–300s HTTP timeouts.<br>• **Silence-Aware 10-Min Map-Reduce Pipeline** (`imageio-ffmpeg` `silencedetect`) with speaker continuity prompts, timestamp offset preservation, overlap deduplication, and per-chunk DB checkpoints (`AudioChunkResultModel`). | [docs/largeFileUpload.md](docs/largeFileUpload.md)<br>`backend/storage_service.py`<br>`backend/audio_chunker.py`<br>`backend/job_worker.py`<br>`frontend/src/utils/uploadClient.ts` |
+| **2. Heavy Traffic, Database Scale & Worker Resilience** | • **SQL-Side Analytics Aggregations** (`func.count`, `func.avg`, `case()`) wrapped in a **30s Single-Flight Cache** to eliminate full-table Python `.all()` OOM crashes & cache stampedes.<br>• **Zero N+1 & Keyset Cursor Pagination** on `/api/history` and `/api/commitments` using denormalized `turns_count` / `commitments_count` and composite `(created_at, id)` indexes.<br>• **Shared DB-Backed Cache (`CacheEntryModel`)** with 7-day TTL + LRU eviction, plus `cache_key` deduplication so cache hits never inflate Call History.<br>• **Token-Bucket Rate Limiter**, **`Idempotency-Key` Guard** (`IdempotencyRecordModel`), bounded worker concurrency (`MAX_CONCURRENT_JOBS` semaphore), and **startup orphaned-job recovery**. | [docs/heavyTrafficAndScale.md](docs/heavyTrafficAndScale.md)<br>`backend/traffic_guard.py`<br>`backend/cache_service.py`<br>`backend/models.py` |
+| **3. AI Rate Limits, Token/Cost Engineering & Fallback Integrity** | • **Resilient AI Gateway:** Exponential backoff with full jitter on transient `429`/`5xx`, fast-fail on `400`/`401`/`403`, and per-provider **Circuit Breakers** (`gemini_circuit`, `groq_circuit` surfaced on `/api/health`).<br>• **Token Telemetry & Guardrails:** Pre-flight token estimation, `max_output_tokens` caps, native Gemini `response_schema` with `transcript` **FIRST** (grounded CoT), and `TokenUsageLedgerModel` tracking exact input/output/cached tokens and USD cost.<br>• **Repaired Groq Fallback:** Chunks files `> 18 MB`, removes hardcoded Hindi grocery prompt bias, and preserves real Whisper `verbose_json` segment timestamps.<br>• **Prompt-Injection Isolation & Deterministic Guards:** `<CONFIG_RUBRIC>` / `<UNTRUSTED_TRANSCRIPT>` delimiters + deterministic post-LLM check for `customForbiddenPhrases`. | [docs/aiResilienceAndTokens.md](docs/aiResilienceAndTokens.md)<br>`backend/ai_gateway.py`<br>`backend/audio_service.py`<br>`backend/prompts.py` |
+| **4. Authentication, Multi-Tenancy & Per-Tenant Daily Token Quotas** | • **Workspace Multi-Tenancy (`org_id`):** Every asset, job, cache key, audit, commitment, and token record is strictly isolated by `org_id` (`OrganizationModel`, `UserModel`).<br>• **Salted `scrypt` Auth & RBAC:** `HttpOnly` cookie JWTs + scoped short-lived `media_token`s for `<audio>` streaming, `ADMIN` vs `MEMBER` role checks, strict `CORS_ALLOWED_ORIGINS`, and security headers.<br>• **Per-Tenant Daily Token Quota & Next-Day Renewal:** Tracks each workspace's daily UTC token usage against `daily_token_limit` (default `500,000`/day), displays live usage & renewal countdown in the Navbar & Analytics Dashboard, and enforces `429 DAILY_QUOTA_EXCEEDED` (`Retry-After`) until automatic renewal at `00:00 UTC`. | [docs/securityAndAuth.md](docs/securityAndAuth.md)<br>`backend/auth_service.py`<br>`frontend/src/components/AuthModal.tsx`<br>`frontend/src/components/AnalyticsDashboard.tsx` |
+
+### 🧪 Verification Test Suites
+Run all backend unit/integration tests and the frontend build:
+```powershell
+cd backend
+.\.venv\Scripts\python.exe test_database.py
+.\.venv\Scripts\python.exe -m pytest test_large_audio_pipeline.py test_plans_2_3_4.py -v
+
+cd ..\frontend
+npm run build
+```
+
+---
+
 ## 🚀 Quick Start Guide
 
 ### 1. Prerequisites
