@@ -6,14 +6,14 @@ import {
   Calendar,
   AlertCircle,
   CheckCircle2,
-  Filter,
   Download,
-  Sparkles,
-  RefreshCw,
-  Search,
 } from 'lucide-react';
-import { ActionItem } from '../types';
-import { API_BASE_URL } from '../config';
+import { ActionItem } from '@/types';
+import { API_BASE_URL } from '@/config';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { EqualizerLoader } from '@/components/reactbits/EqualizerLoader';
 
 export const CommitmentsBoard: React.FC = () => {
   const [commitments, setCommitments] = useState<ActionItem[]>([]);
@@ -62,7 +62,11 @@ export const CommitmentsBoard: React.FC = () => {
 
   const toggleStatus = async (id: string, currentStatus?: string) => {
     const nextStatus =
-      currentStatus === 'COMPLETED' ? 'PENDING' : currentStatus === 'PENDING' ? 'IN_PROGRESS' : 'COMPLETED';
+      currentStatus === 'COMPLETED'
+        ? 'PENDING'
+        : currentStatus === 'PENDING'
+        ? 'IN_PROGRESS'
+        : 'COMPLETED';
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/commitments/${id}`, {
@@ -76,7 +80,7 @@ export const CommitmentsBoard: React.FC = () => {
           prev.map((c) => (c.id === id ? { ...c, status: nextStatus as any } : c))
         );
       }
-    } catch (err) {
+    } catch {
       alert('Failed to update status');
     }
   };
@@ -94,7 +98,9 @@ export const CommitmentsBoard: React.FC = () => {
       `"${c.evidenceQuote.replace(/"/g, '""')}"`,
     ]);
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const csvContent =
+      'data:text/csv;charset=utf-8,' +
+      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
@@ -105,162 +111,158 @@ export const CommitmentsBoard: React.FC = () => {
   };
 
   const filtered = commitments.filter((c) =>
-    searchTerm ? c.task.toLowerCase().includes(searchTerm.toLowerCase()) || c.evidenceQuote.toLowerCase().includes(searchTerm.toLowerCase()) : true
+    searchTerm
+      ? c.task.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.evidenceQuote.toLowerCase().includes(searchTerm.toLowerCase())
+      : true
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fadeIn">
       {/* Controls Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-sm">
+      <Card className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="flex items-center gap-2 text-xl font-bold text-slate-100">
-            <CheckSquare className="h-5 w-5 text-amber-400" />
+          <h2 className="font-display flex items-center gap-2 text-xl font-extrabold text-ink">
+            <CheckSquare className="h-5 w-5 text-accent" />
             Commitment &amp; Follow-up Lifecycle Manager
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Grounded action items extracted from audited calls. Track, update status, and sync directly to CRM.
+          <p className="text-xs text-ink-muted mt-0.5">
+            Grounded action items extracted from audited calls. Track, update status, and export to CSV.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Status Tabs */}
-          <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950/60 p-0.5 text-xs">
+          <div className="flex items-center rounded-xl border border-subtle bg-canvas p-1 text-xs">
             {(['ALL', 'PENDING', 'IN_PROGRESS', 'COMPLETED'] as const).map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setStatusFilter(s)}
-                className={`rounded-md px-3 py-1 font-medium transition-all ${
+                className={`rounded-lg px-3 py-1 font-bold transition-all cursor-pointer ${
                   statusFilter === s
-                    ? 'bg-slate-800 text-amber-400 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-accent text-accent-fg shadow-xs'
+                    : 'text-ink-muted hover:text-ink'
                 }`}
               >
-                {s === 'ALL' ? 'All' : s === 'IN_PROGRESS' ? 'In Progress' : s.charAt(0) + s.slice(1).toLowerCase()}
+                {s === 'ALL'
+                  ? 'All'
+                  : s === 'IN_PROGRESS'
+                  ? 'In Progress'
+                  : s.charAt(0) + s.slice(1).toLowerCase()}
               </button>
             ))}
           </div>
 
-          {/* Export to CSV Button */}
-          <button
-            type="button"
-            onClick={exportCSV}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-amber-400 transition-all"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={exportCSV}>
             <Download className="h-3.5 w-3.5" />
             Export CSV
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
-      {/* Commitments Grid */}
       {isLoading ? (
-        <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-          <RefreshCw className="h-7 w-7 animate-spin text-amber-400 mb-3" />
+        <div className="flex flex-col items-center justify-center py-16 text-ink-muted gap-3">
+          <EqualizerLoader size="md" />
           <p className="text-sm font-medium">Loading action items from database...</p>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-12 text-center text-slate-400">
-          <CheckSquare className="h-10 w-10 mx-auto mb-3 text-slate-600" />
-          <h3 className="text-base font-semibold text-slate-300">No Commitments in this Category</h3>
-          <p className="text-xs text-slate-500 mt-1">
+        <Card className="p-12 text-center text-ink-muted">
+          <CheckSquare className="h-10 w-10 mx-auto mb-3 opacity-50" />
+          <h3 className="text-base font-bold text-ink">No Commitments in this Category</h3>
+          <p className="text-xs text-ink-muted mt-1">
             Change the status filter or audit calls with agreed next steps to populate tasks.
           </p>
-        </div>
+        </Card>
       ) : (
         <>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((item) => {
-            const isCompleted = item.status === 'COMPLETED';
-            const isInProgress = item.status === 'IN_PROGRESS';
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map((item) => {
+              const isCompleted = item.status === 'COMPLETED';
+              const isInProgress = item.status === 'IN_PROGRESS';
 
-            return (
-              <div
-                key={item.id}
-                className={`relative flex flex-col justify-between rounded-xl border p-4.5 transition-all ${
-                  isCompleted
-                    ? 'border-emerald-500/30 bg-emerald-950/10 opacity-75'
-                    : isInProgress
-                    ? 'border-blue-500/30 bg-blue-950/10'
-                    : 'border-slate-800 bg-slate-900/50 hover:border-slate-700'
-                }`}
-              >
-                <div>
-                  {/* Status & Owner Tags */}
-                  <div className="flex items-center justify-between gap-2 mb-2.5">
-                    <button
-                      type="button"
-                      onClick={() => toggleStatus(item.id, item.status)}
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold border cursor-pointer transition-all ${
-                        isCompleted
-                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
-                          : isInProgress
-                          ? 'border-blue-500/40 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
-                          : 'border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+              return (
+                <Card
+                  key={item.id}
+                  className={`flex flex-col justify-between p-5 transition-all ${
+                    isCompleted ? 'border-status-green/35 opacity-80' : 'hover:border-accent/50'
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleStatus(item.id, item.status)}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold border cursor-pointer transition-all ${
+                          isCompleted
+                            ? 'border-status-green/40 bg-status-green-soft text-status-green'
+                            : isInProgress
+                            ? 'border-strong bg-anchor text-ink-anchor'
+                            : 'border-accent/40 bg-accent-soft text-accent'
+                        }`}
+                      >
+                        {isCompleted ? (
+                          <>
+                            <CheckCircle2 className="h-3 w-3" />
+                            <span>Resolved</span>
+                          </>
+                        ) : isInProgress ? (
+                          <>
+                            <Clock className="h-3 w-3" />
+                            <span>In Progress</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="h-3 w-3" />
+                            <span>Pending</span>
+                          </>
+                        )}
+                      </button>
+
+                      <Badge variant="default" className="rounded-md">
+                        <User className="h-3 w-3" />
+                        {item.owner}
+                      </Badge>
+                    </div>
+
+                    <h4
+                      className={`text-sm font-bold text-ink ${
+                        isCompleted ? 'line-through text-ink-muted' : ''
                       }`}
                     >
-                      {isCompleted ? (
-                        <>
-                          <CheckCircle2 className="h-3 w-3" />
-                          <span>Resolved</span>
-                        </>
-                      ) : isInProgress ? (
-                        <>
-                          <Clock className="h-3 w-3" />
-                          <span>In Progress</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertCircle className="h-3 w-3" />
-                          <span>Pending</span>
-                        </>
-                      )}
-                    </button>
+                      {item.task}
+                    </h4>
 
-                    <span className="flex items-center gap-1 rounded bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300 font-medium border border-slate-700/60">
-                      <User className="h-3 w-3 text-slate-400" />
-                      {item.owner}
-                    </span>
+                    <p className="text-xs text-ink-muted italic bg-canvas rounded-xl p-3 mt-3 border border-subtle">
+                      &ldquo;{item.evidenceQuote}&rdquo;
+                    </p>
                   </div>
 
-                  {/* Task Name */}
-                  <h4 className={`text-sm font-bold text-slate-100 ${isCompleted ? 'line-through text-slate-400' : ''}`}>
-                    {item.task}
-                  </h4>
-
-                  {/* Spoken Quote */}
-                  <p className="text-xs text-slate-400 italic bg-slate-950/50 rounded-lg p-2.5 mt-2.5 border border-slate-800/80">
-                    &ldquo;{item.evidenceQuote}&rdquo;
-                  </p>
-                </div>
-
-                {/* Footer: Deadline & Time */}
-                <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                  <span className="flex items-center gap-1 text-amber-400/90 font-medium">
-                    <Calendar className="h-3.5 w-3.5" />
-                    {item.deadline || 'No strict deadline'}
-                  </span>
-                  {item.timestamp && (
-                    <span className="font-mono text-slate-500">Call Time: {item.timestamp}</span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {hasMore && nextCursor && (
-          <div className="pt-2 text-center">
-            <button
-              type="button"
-              disabled={isLoadingMore}
-              onClick={() => fetchCommitments(nextCursor)}
-              className="rounded-lg border border-slate-700 bg-slate-800/80 px-5 py-2 text-xs font-bold text-amber-300 hover:bg-slate-700 transition-all cursor-pointer disabled:opacity-50"
-            >
-              {isLoadingMore ? 'Loading more commitments...' : 'Load More Commitments'}
-            </button>
+                  <div className="mt-4 pt-3 border-t border-subtle flex items-center justify-between text-[11px] text-ink-muted">
+                    <span className="flex items-center gap-1 text-accent font-bold">
+                      <Calendar className="h-3.5 w-3.5" />
+                      {item.deadline || 'No strict deadline'}
+                    </span>
+                    {item.timestamp && (
+                      <span className="font-mono text-ink-muted">Call Time: {item.timestamp}</span>
+                    )}
+                  </div>
+                </Card>
+              );
+            })}
           </div>
-        )}
-      </>
+          {hasMore && nextCursor && (
+            <div className="pt-2 text-center">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isLoadingMore}
+                onClick={() => fetchCommitments(nextCursor)}
+              >
+                {isLoadingMore ? 'Loading more commitments...' : 'Load More Commitments'}
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

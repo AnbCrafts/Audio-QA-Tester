@@ -12,6 +12,11 @@ T = TypeVar("T")
 
 # Approximate USD pricing per 1M tokens for telemetry
 MODEL_PRICING_PER_1M: Dict[str, Dict[str, float]] = {
+    "gemini-3.5-flash": {"input": 0.15, "output": 0.60, "cached": 0.0375},
+    "gemini-3.5-flash-lite": {"input": 0.075, "output": 0.30, "cached": 0.01875},
+    "gemini-2.5-flash": {"input": 0.15, "output": 0.60, "cached": 0.0375},
+    "gemini-2.5-flash-lite": {"input": 0.075, "output": 0.30, "cached": 0.01875},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00, "cached": 0.3125},
     "gemini-flash-latest": {"input": 0.15, "output": 0.60, "cached": 0.0375},
     "gemini-flash-lite-latest": {"input": 0.075, "output": 0.30, "cached": 0.01875},
     "qwen/qwen3.8-27b": {"input": 0.20, "output": 0.40, "cached": 0.20},

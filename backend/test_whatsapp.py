@@ -1,7 +1,7 @@
 import os
 import json
 from dotenv import load_dotenv
-load_dotenv('f:/ScaleWorks_Assignment/backend/.env')
+load_dotenv()
 from google import genai
 from google.genai import types
 

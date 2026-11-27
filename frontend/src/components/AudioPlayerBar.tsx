@@ -133,7 +133,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       : parseDurationStringToSeconds(durationStr);
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-4 shadow-xl backdrop-blur-md">
+    <div className="rounded-2xl border border-subtle bg-surface p-4 shadow-sm transition-colors">
       {audioUrl && (
         <audio
           ref={audioRef}
@@ -148,20 +148,20 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         {/* Track Metadata */}
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent border border-accent/30">
             <Music className="h-5 w-5" />
           </div>
           <div className="overflow-hidden">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-white truncate max-w-xs sm:max-w-md">
+              <span className="text-xs font-bold text-ink truncate max-w-xs sm:max-w-md">
                 {fileName}
               </span>
-              <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-mono text-amber-400 border border-slate-700">
-                .M4A
+              <span className="rounded-md bg-canvas px-1.5 py-0.5 text-[10px] font-mono font-bold text-accent border border-subtle">
+                AUDIO
               </span>
             </div>
-            <div className="text-[11px] text-slate-400">
-              Size: {fileSize} • Duration: {durationStr}
+            <div className="text-[11px] text-ink-muted">
+              Size: {fileSize} &bull; Duration: {durationStr}
             </div>
           </div>
         </div>
@@ -169,7 +169,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         {/* Timeline Slider */}
         <div className="flex flex-1 max-w-xl flex-col gap-1.5 px-2">
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-slate-400 w-10 text-right">
+            <span className="text-[11px] font-mono text-ink-muted w-12 text-right">
               {formatSeconds(currentTime)}
             </span>
             <input
@@ -179,9 +179,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               step={0.1}
               value={currentTime}
               onChange={handleSeek}
-              className="h-1.5 w-full cursor-pointer appearance-none rounded-lg bg-slate-800 accent-amber-400"
+              style={{ accentColor: 'var(--accent-primary)' }}
+              className="h-1.5 w-full cursor-pointer rounded-lg bg-subtle"
             />
-            <span className="text-[11px] font-mono text-slate-500 w-10">
+            <span className="text-[11px] font-mono text-ink-muted w-12">
               {formatSeconds(effectiveMaxDuration)}
             </span>
           </div>
@@ -190,16 +191,18 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         {/* Playback Controls */}
         <div className="flex items-center justify-end gap-2 shrink-0">
           <button
+            type="button"
             onClick={() => handleSkipSeconds(-5)}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            className="rounded-lg p-2 text-ink-muted hover:bg-accent-soft hover:text-ink transition-colors cursor-pointer"
             title="Rewind 5s"
           >
             <RotateCcw className="h-4 w-4" />
           </button>
 
           <button
+            type="button"
             onClick={handleTogglePlay}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500 text-slate-950 font-bold hover:bg-amber-400 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-accent-fg font-bold hover:bg-accent-hover transition-all shadow-sm cursor-pointer"
           >
             {isPlaying ? (
               <Pause className="h-4 w-4" />
@@ -209,28 +212,31 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={() => handleSkipSeconds(5)}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            className="rounded-lg p-2 text-ink-muted hover:bg-accent-soft hover:text-ink transition-colors cursor-pointer"
             title="Fast forward 5s"
           >
             <RotateCw className="h-4 w-4" />
           </button>
 
           <button
+            type="button"
             onClick={handleCyclePlaybackRate}
-            className="rounded-lg bg-slate-800 px-2 py-1 text-[11px] font-mono font-bold text-slate-300 hover:text-white transition-colors cursor-pointer"
+            className="rounded-lg bg-canvas border border-subtle px-2 py-1 text-[11px] font-mono font-bold text-ink hover:border-accent transition-colors cursor-pointer"
             title="Playback Speed"
           >
             {playbackRate}x
           </button>
 
           <button
+            type="button"
             onClick={() => setIsMuted(!isMuted)}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            className="rounded-lg p-2 text-ink-muted hover:bg-accent-soft hover:text-ink transition-colors cursor-pointer"
             title={isMuted ? 'Unmute' : 'Mute'}
           >
             {isMuted ? (
-              <VolumeX className="h-4 w-4 text-rose-400" />
+              <VolumeX className="h-4 w-4 text-status-red" />
             ) : (
               <Volume2 className="h-4 w-4" />
             )}

@@ -6,7 +6,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 load_dotenv()
 
 # Default to local SQLite database; seamlessly switches to Postgres if DATABASE_URL is set in .env
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./scaleworks.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./inflect.db")
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
@@ -84,6 +84,15 @@ def run_schema_migrations():
                 ") WHERE commitments_count = 0"
             )
         )
+
+        # PostgreSQL GIN Full-Text Search index on spoken transcript text
+        if not DATABASE_URL.startswith("sqlite"):
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_transcript_segments_fts "
+                    "ON transcript_segments USING GIN (to_tsvector('english', coalesce(text, '')))"
+                )
+            )
 
 
 def get_db():

@@ -1,5 +1,5 @@
-# Sales Call Quality Analysis Agent
-### ScaleWorks AI Engineering Assessment — Forward Deployed Engineer
+# Inflect — Call Quality & Conversation Intelligence Platform
+### Multi-Tenant Voice QA, Tone Isolation & Commitment Auditing Engine
 
 An intelligent, multi-business web application that processes `.m4a` sales call recordings, performs speaker diarization (separating Representative from Customer), evaluates the sales representative's tone with evidence-grounded citations, extracts concrete commitments without hallucinating deadlines, and provides an in-app configurability panel for multiple industry domains.
 
@@ -18,7 +18,7 @@ An intelligent, multi-business web application that processes `.m4a` sales call 
 ## 🗄️ Database & Persistence Layer
 
 The platform includes a production **SQLAlchemy ORM layer**:
-* **Default Setup (Zero Config):** Automatically creates a local SQLite database (`scaleworks.db`) with relational models for `CallAuditModel`, `TranscriptSegmentModel`, and `CommitmentModel`.
+* **Default Setup (Zero Config):** Automatically creates a local SQLite database (`inflect.db`) with relational models for `CallAuditModel`, `TranscriptSegmentModel`, and `CommitmentModel`.
 * **PostgreSQL / Cloud DB Ready:** To connect to Supabase, Neon, or AWS RDS, simply set `DATABASE_URL` in `backend/.env`:
   ```env
   DATABASE_URL=postgresql://user:password@host:5432/dbname
@@ -152,7 +152,7 @@ npm run build
 
 ## 🧪 Representative Test Calls Included
 
-The assignment requires at least two representative test calls:
+The repository includes representative sample call recordings for local validation:
 1. **GREEN Call (Compliant)**:
    * *Scenario*: A high-pressure B2B SaaS discovery call where the customer raises acute Q3 budget freeze objections.
    * *Outcome*: Representative maintains active listening, validates budget constraints without defensiveness, offers a phased 15-seat pilot, and commits to an itemized proposal by 3 PM the following day.
@@ -170,4 +170,4 @@ The assignment requires at least two representative test calls:
 ---
 
 ## 📄 License
-MIT License. Built for ScaleWorks AI Engineering Assessment.
+MIT License. Built as a production multi-tenant Call Intelligence & QA platform.

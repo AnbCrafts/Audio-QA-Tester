@@ -1,7 +1,15 @@
-import React, { useState } from 'react';
-import { X, Sliders, Sparkles, Shield, Cpu, Info, Check, RefreshCw } from 'lucide-react';
-import { AnalysisConfig, BusinessPreset, SensitivityLevel, ActionItemScope } from '../types';
-import { BUSINESS_PRESETS } from '../data/presets';
+import React, { useState, useEffect } from 'react';
+import { Sliders, Sparkles, Shield, Cpu, Info, Check, RefreshCw } from 'lucide-react';
+import {
+  AnalysisConfig,
+  BusinessPreset,
+  SensitivityLevel,
+  ActionItemScope,
+} from '@/types';
+import { BUSINESS_PRESETS } from '@/data/presets';
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
+import { Input, Textarea } from '@/components/ui/input';
 
 interface ConfigDrawerProps {
   isOpen: boolean;
@@ -23,7 +31,11 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
   const [localConfig, setLocalConfig] = useState<AnalysisConfig>(config);
   const [newPhrase, setNewPhrase] = useState('');
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (isOpen) {
+      setLocalConfig(config);
+    }
+  }, [isOpen, config]);
 
   const handlePresetChange = (preset: BusinessPreset) => {
     setLocalConfig((prev) => ({
@@ -59,35 +71,29 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-opacity">
-      <div className="relative flex h-full w-full max-w-xl flex-col bg-slate-900 border-l border-slate-800 shadow-2xl p-6 overflow-y-auto">
+    <Sheet open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <SheetContent>
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
-              <Sliders className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-white">Agent Analysis Settings</h2>
-              <p className="text-xs text-slate-400">
-                Configure tone criteria, rubrics, and sensitivity for any business type
-              </p>
-            </div>
+        <div className="flex items-center gap-3 border-b border-subtle pb-4 pr-8">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-soft text-accent border border-accent/30">
+            <Sliders className="h-5 w-5" />
           </div>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div>
+            <SheetTitle className="font-display text-base font-extrabold text-ink">
+              Agent Analysis Settings
+            </SheetTitle>
+            <SheetDescription className="text-xs text-ink-muted">
+              Configure tone criteria, rubrics, and sensitivity for any business type
+            </SheetDescription>
+          </div>
         </div>
 
         {/* Content Body */}
         <div className="mt-6 flex-1 space-y-6 text-sm">
-          {/* Section 1: Business Presets (Multi-Business adaptability) */}
+          {/* 1. Business Presets */}
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-2.5">
-              <Sparkles className="h-4 w-4 text-amber-400" />
+            <label className="text-xs font-bold uppercase tracking-wider text-ink-muted flex items-center gap-1.5 mb-2.5">
+              <Sparkles className="h-4 w-4 text-accent" />
               1. Business Domain Presets
             </label>
             <div className="grid grid-cols-2 gap-2.5">
@@ -96,18 +102,19 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
                 return (
                   <button
                     key={preset.id}
+                    type="button"
                     onClick={() => handlePresetChange(preset)}
                     className={`flex flex-col items-start p-3 rounded-xl border text-left transition-all cursor-pointer ${
                       isSelected
-                        ? 'border-amber-400 bg-amber-500/10 text-white shadow-sm'
-                        : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        ? 'border-accent bg-accent-soft text-ink shadow-xs'
+                        : 'border-subtle bg-canvas/70 text-ink-muted hover:border-accent/50 hover:text-ink'
                     }`}
                   >
                     <div className="flex items-center justify-between w-full mb-1">
-                      <span className="font-semibold text-xs text-white">{preset.name}</span>
-                      {isSelected && <Check className="h-3.5 w-3.5 text-amber-400" />}
+                      <span className="font-bold text-xs text-ink">{preset.name}</span>
+                      {isSelected && <Check className="h-3.5 w-3.5 text-accent" />}
                     </div>
-                    <span className="text-[11px] text-slate-400 leading-tight">
+                    <span className="text-[11px] text-ink-muted leading-tight">
                       {preset.industry}
                     </span>
                   </button>
@@ -116,44 +123,48 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Tone Criteria & Rubric */}
+          {/* 2. Tone Rubric */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Shield className="h-4 w-4 text-amber-400" />
-                2. Tone Evaluation Rubric (Prompt Grounding)
+              <label className="text-xs font-bold uppercase tracking-wider text-ink-muted flex items-center gap-1.5">
+                <Shield className="h-4 w-4 text-accent" />
+                2. Tone Evaluation Rubric (Guarded)
               </label>
               <button
                 type="button"
                 onClick={() => {
-                  const currentPreset = BUSINESS_PRESETS.find(p => p.id === localConfig.presetId);
+                  const currentPreset = BUSINESS_PRESETS.find(
+                    (p) => p.id === localConfig.presetId
+                  );
                   if (currentPreset) {
-                    setLocalConfig(prev => ({ ...prev, toneCriteria: currentPreset.defaultToneCriteria }));
+                    setLocalConfig((prev) => ({
+                      ...prev,
+                      toneCriteria: currentPreset.defaultToneCriteria,
+                    }));
                   }
                 }}
-                className="text-[11px] text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-[11px] font-semibold text-accent hover:underline flex items-center gap-1 cursor-pointer"
               >
-                <RefreshCw className="h-3 w-3" /> Reset to preset default
+                <RefreshCw className="h-3 w-3" /> Reset default
               </button>
             </div>
-            <textarea
+            <Textarea
               value={localConfig.toneCriteria}
               onChange={(e) =>
                 setLocalConfig((prev) => ({ ...prev, toneCriteria: e.target.value }))
               }
               rows={4}
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 p-3 text-xs text-slate-200 focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400 font-sans"
               placeholder="Define exact behavior that triggers a RED or GREEN rating..."
             />
-            <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1">
-              <Info className="h-3 w-3 shrink-0" />
-              This is fed directly to the LLM system prompt to evaluate only the representative.
+            <p className="text-[11px] text-ink-muted mt-1 flex items-center gap-1">
+              <Info className="h-3 w-3 shrink-0 text-accent" />
+              Protected by 4-layer negative-prompt injection guards; evaluates representative only.
             </p>
           </div>
 
-          {/* Section 3: Sensitivity Level */}
+          {/* 3. Sensitivity */}
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 block">
+            <label className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-2 block">
               3. Flag Sensitivity Threshold
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -162,11 +173,12 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
                 return (
                   <button
                     key={level}
+                    type="button"
                     onClick={() => setLocalConfig((prev) => ({ ...prev, sensitivity: level }))}
-                    className={`py-2 px-3 rounded-lg border text-xs font-bold capitalize transition-all cursor-pointer ${
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold capitalize transition-all cursor-pointer ${
                       isSelected
-                        ? 'border-amber-400 bg-amber-500/10 text-amber-300'
-                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'
+                        ? 'border-accent bg-accent text-accent-fg shadow-xs'
+                        : 'border-subtle bg-canvas text-ink-muted hover:text-ink'
                     }`}
                   >
                     {level}
@@ -174,16 +186,19 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
                 );
               })}
             </div>
-            <p className="text-[11px] text-slate-500 mt-1.5">
-              {localConfig.sensitivity === 'low' && 'Only flags explicit aggression, overt slurs, or extreme hostility.'}
-              {localConfig.sensitivity === 'balanced' && 'Flags sarcasm, dismissiveness, or persistent condescension.'}
-              {localConfig.sensitivity === 'strict' && 'Flags any impatience, interrupting, or reluctant responses.'}
+            <p className="text-[11px] text-ink-muted mt-1.5">
+              {localConfig.sensitivity === 'low' &&
+                'Only flags explicit aggression, overt slurs, or extreme hostility.'}
+              {localConfig.sensitivity === 'balanced' &&
+                'Flags sarcasm, dismissiveness, or persistent condescension.'}
+              {localConfig.sensitivity === 'strict' &&
+                'Flags any impatience, interrupting, or reluctant responses.'}
             </p>
           </div>
 
-          {/* Section 4: Action Item Grounding Scope */}
+          {/* 4. Action Item Scope */}
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 block">
+            <label className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-2 block">
               4. Action Item Extraction Scope
             </label>
             <div className="space-y-2">
@@ -216,137 +231,135 @@ export const ConfigDrawer: React.FC<ConfigDrawerProps> = ({
                     }
                     className={`p-3 rounded-xl border cursor-pointer transition-all ${
                       isSelected
-                        ? 'border-amber-400/80 bg-amber-500/5 text-white'
-                        : 'border-slate-800 bg-slate-950/60 text-slate-400 hover:border-slate-700'
+                        ? 'border-accent bg-accent-soft text-ink'
+                        : 'border-subtle bg-canvas/70 text-ink-muted hover:border-accent/40'
                     }`}
                   >
                     <div className="flex items-center gap-2">
                       <div
                         className={`h-4 w-4 rounded-full border flex items-center justify-center ${
-                          isSelected ? 'border-amber-400 bg-amber-400' : 'border-slate-600'
+                          isSelected ? 'border-accent bg-accent' : 'border-strong'
                         }`}
                       >
-                        {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-slate-950" />}
+                        {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-accent-fg" />}
                       </div>
-                      <span className="text-xs font-bold text-white">{scope.label}</span>
+                      <span className="text-xs font-bold text-ink">{scope.label}</span>
                     </div>
-                    <p className="text-[11px] text-slate-400 mt-1 ml-6">{scope.desc}</p>
+                    <p className="text-[11px] text-ink-muted mt-1 ml-6">{scope.desc}</p>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          {/* Section 5: Custom Trigger / Forbidden Phrases */}
+          {/* 5. Forbidden Phrases */}
           <div>
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 block">
+            <label className="text-xs font-bold uppercase tracking-wider text-ink-muted mb-2 block">
               5. Custom Monitored Phrases (Optional)
             </label>
             <div className="flex gap-2 mb-2">
-              <input
+              <Input
                 type="text"
                 value={newPhrase}
                 onChange={(e) => setNewPhrase(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddPhrase())}
                 placeholder="Add phrase (e.g. 'not my problem')..."
-                className="flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                className="flex-1"
               />
-              <button
-                type="button"
-                onClick={handleAddPhrase}
-                className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700 cursor-pointer"
-              >
+              <Button type="button" variant="outline" size="sm" onClick={handleAddPhrase}>
                 Add
-              </button>
+              </Button>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {localConfig.customForbiddenPhrases.map((phrase) => (
                 <span
                   key={phrase}
-                  className="inline-flex items-center gap-1 rounded-full bg-slate-800 border border-slate-700 px-2.5 py-0.5 text-[11px] text-slate-300"
+                  className="inline-flex items-center gap-1 rounded-full bg-canvas border border-subtle px-2.5 py-0.5 text-[11px] text-ink"
                 >
                   "{phrase}"
                   <button
+                    type="button"
                     onClick={() => handleRemovePhrase(phrase)}
-                    className="text-slate-400 hover:text-rose-400 ml-1"
+                    className="text-ink-muted hover:text-status-red ml-1 cursor-pointer"
                   >
-                    ×
+                    &times;
                   </button>
                 </span>
               ))}
             </div>
           </div>
 
-          {/* Section 6: AI Engine & Fallback */}
-          <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-3.5">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 mb-2">
-              <Cpu className="h-4 w-4 text-amber-400" />
-              6. AI Engine & Dual-Engine Fallback
+          {/* 6. AI Engine */}
+          <div className="rounded-xl border border-subtle bg-canvas p-3.5">
+            <label className="text-xs font-bold uppercase tracking-wider text-ink-muted flex items-center gap-1.5 mb-2">
+              <Cpu className="h-4 w-4 text-accent" />
+              6. AI Engine &amp; Dual-Engine Fallback
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button
+                type="button"
                 onClick={() => setLocalConfig((prev) => ({ ...prev, aiProvider: 'gemini' }))}
-                className={`p-2.5 rounded-lg border text-xs font-bold text-left transition-all ${
+                className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all cursor-pointer ${
                   localConfig.aiProvider === 'gemini'
-                    ? 'border-amber-400 bg-amber-500/10 text-white'
-                    : 'border-slate-800 text-slate-400 hover:text-white'
+                    ? 'border-accent bg-accent-soft text-ink'
+                    : 'border-subtle bg-surface text-ink-muted hover:text-ink'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span>Gemini 2.0 / 1.5</span>
-                  <span className="text-[10px] text-amber-400 font-mono">PRIMARY</span>
+                  <span>Gemini 2.0 / 2.5</span>
+                  <span className="text-[10px] text-accent font-mono">PRIMARY</span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Direct multimodal audio & reasoning</p>
+                <p className="text-[10px] text-ink-muted mt-0.5 font-normal">
+                  Direct multimodal audio &amp; reasoning
+                </p>
               </button>
               <button
+                type="button"
                 onClick={() => setLocalConfig((prev) => ({ ...prev, aiProvider: 'groq' }))}
-                className={`p-2.5 rounded-lg border text-xs font-bold text-left transition-all ${
+                className={`p-2.5 rounded-xl border text-xs font-bold text-left transition-all cursor-pointer ${
                   localConfig.aiProvider === 'groq'
-                    ? 'border-amber-400 bg-amber-500/10 text-white'
-                    : 'border-slate-800 text-slate-400 hover:text-white'
+                    ? 'border-accent bg-accent-soft text-ink'
+                    : 'border-subtle bg-surface text-ink-muted hover:text-ink'
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <span>Groq (Llama-3.3)</span>
-                  <span className="text-[10px] text-emerald-400 font-mono">FALLBACK</span>
+                  <span className="text-[10px] text-status-green font-mono">FALLBACK</span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-0.5">Ultra-fast inference fallback</p>
+                <p className="text-[10px] text-ink-muted mt-0.5 font-normal">
+                  Whisper timestamps &amp; fast fallback
+                </p>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
-          <button
-            onClick={onClose}
-            className="rounded-lg px-4 py-2 text-xs font-semibold text-slate-400 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
-          >
+        {/* Footer */}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-subtle pt-4">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>
             Cancel
-          </button>
+          </Button>
           <div className="flex items-center gap-2.5">
-            <button
-              onClick={handleApply}
-              className="rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white transition-all cursor-pointer"
-            >
+            <Button type="button" variant="outline" size="sm" onClick={handleApply}>
               Save Settings
-            </button>
+            </Button>
             {hasLoadedCall && onReanalyzeLoadedCall && (
-              <button
+              <Button
+                type="button"
+                size="sm"
                 onClick={() => {
                   onSaveConfig(localConfig);
                   onReanalyzeLoadedCall(localConfig);
                   onClose();
                 }}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-amber-400 px-4 py-2 text-xs font-bold text-slate-950 hover:from-amber-400 hover:to-amber-300 transition-all shadow-md shadow-amber-500/20 cursor-pointer"
               >
                 <Sparkles className="h-3.5 w-3.5" />
-                ⚡ Re-Analyze Loaded Call (~350ms)
-              </button>
+                Re-Analyze Loaded Call (~350ms)
+              </Button>
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 };

@@ -9,7 +9,12 @@ import { ConfigDrawer } from './components/ConfigDrawer';
 import { CallHistoryView } from './components/CallHistoryView';
 import { CommitmentsBoard } from './components/CommitmentsBoard';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { WorkspaceAdminView } from './components/WorkspaceAdminView';
 import { AuthModal } from './components/AuthModal';
+import { LandingPage } from './components/LandingPage';
+import { ThemeProvider } from './context/ThemeContext';
+import { AmbientBackdrop } from './components/reactbits/AmbientBackdrop';
+import { EqualizerLoader } from './components/reactbits/EqualizerLoader';
 import { BUSINESS_PRESETS } from './data/presets';
 import { AnalysisConfig, AnalysisReport, JobProgressEvent, OrgTokenQuota, UserProfile } from './types';
 import { API_BASE_URL, generateIdempotencyKey } from './config';
@@ -51,12 +56,24 @@ export const App: React.FC = () => {
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [tokenQuota, setTokenQuota] = useState<OrgTokenQuota | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  const openAuthModal = (mode: 'login' | 'register') => {
+    setAuthModalMode(mode);
+    setAuthModalOpen(true);
+  };
 
   const fetchTokenQuota = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/org/token-quota`, { credentials: 'include' });
+      if (res.status === 401) {
+        setCurrentUser(null);
+        setTokenQuota(null);
+        return;
+      }
       if (res.ok) {
         setTokenQuota(await res.json());
       }
@@ -124,6 +141,18 @@ export const App: React.FC = () => {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+  };
+
+  const formatApiError = (errJson: any, fallback: string): string => {
+    if (!errJson || !errJson.detail) return fallback;
+    if (typeof errJson.detail === 'string') return errJson.detail;
+    if (Array.isArray(errJson.detail)) {
+      return errJson.detail
+        .map((d: any) => String(d?.msg || '').replace(/^Value error,\s*/i, ''))
+        .filter(Boolean)
+        .join('; ') || fallback;
+    }
+    return fallback;
   };
 
   const resolveAudioUrl = (rawUrl?: string | null, fallbackUrl?: string | null) => {
@@ -238,7 +267,7 @@ export const App: React.FC = () => {
         if (resp.status === 429 && errJson.code === 'DAILY_QUOTA_EXCEEDED') {
           fetchTokenQuota();
         }
-        throw new Error(errJson.detail || `Server error (${resp.status}): Failed to queue analysis.`);
+        throw new Error(formatApiError(errJson, `Server error (${resp.status}): Failed to queue analysis.`));
       }
 
       const jobData = await resp.json();
@@ -246,12 +275,22 @@ export const App: React.FC = () => {
     } catch (err: any) {
       console.error('Analysis error:', err);
       closeActiveEventSource();
-      setErrorMessage(err.message || 'Failed to upload or analyze call recording.');
+      const msg = err.message || 'Failed to upload or analyze call recording.';
+      const isAuthErr = err?.status === 401 || /authentication required|sign in/i.test(msg);
+      if (isAuthErr) {
+        setCurrentUser(null);
+        setTokenQuota(null);
+        setStagedFile(file);
+        setErrorMessage(null);
+        openAuthModal('login');
+      } else {
+        setErrorMessage(msg);
+      }
       setIsProcessing(false);
     }
   };
 
-  const handleSelectHistoricalCall = async (callId: string) => {
+  const handleSelectHistoricalCall = async (callId: string, seekSeconds?: number | null) => {
     try {
       setIsProcessing(true);
       setProgressPct(50);
@@ -265,6 +304,9 @@ export const App: React.FC = () => {
       data.audioUrl = resolveAudioUrl(data.audioUrl, `/${data.fileName}`);
       setCurrentReport(data);
       setActiveTab('auditor');
+      if (seekSeconds !== undefined && seekSeconds !== null) {
+        setSeekTime(seekSeconds);
+      }
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to retrieve call from database.');
     } finally {
@@ -310,10 +352,18 @@ export const App: React.FC = () => {
 
       if (!resp.ok) {
         const errJson = await resp.json().catch(() => ({}));
+        if (resp.status === 401) {
+          setCurrentUser(null);
+          setTokenQuota(null);
+          setErrorMessage(null);
+          openAuthModal('login');
+          setIsProcessing(false);
+          return;
+        }
         if (resp.status === 429 && errJson.code === 'DAILY_QUOTA_EXCEEDED') {
           fetchTokenQuota();
         }
-        throw new Error(errJson.detail || `Server error (${resp.status}): Failed to re-analyze call.`);
+        throw new Error(formatApiError(errJson, `Server error (${resp.status}): Failed to re-analyze call.`));
       }
 
       const jobData = await resp.json();
@@ -340,7 +390,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleUpdateTranscriptSegment = (id: string, newText: string, newSpeaker: string) => {
+  const handleUpdateTranscriptSegment = async (id: string, newText: string, newSpeaker: string) => {
     if (!currentReport) return;
     const isRep = newSpeaker === 'Sales Rep';
     const updated = currentReport.transcript.map((seg) => {
@@ -359,6 +409,31 @@ export const App: React.FC = () => {
       ...currentReport,
       transcript: updated,
     });
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/history/${encodeURIComponent(currentReport.callId)}/transcript/${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: newText, speaker: newSpeaker }),
+        }
+      );
+      if (res.ok) {
+        const persisted = await res.json();
+        setCurrentReport((prev) =>
+          prev
+            ? {
+                ...prev,
+                transcript: prev.transcript.map((s) => (s.id === id ? { ...s, ...persisted } : s)),
+              }
+            : prev
+        );
+      }
+    } catch (err) {
+      console.error('Failed to persist transcript edit:', err);
+    }
   };
 
   const handleReset = () => {
@@ -382,186 +457,234 @@ export const App: React.FC = () => {
   }, [currentReport?.audioUrl]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {authChecked && !currentUser && (
-        <AuthModal
-          onAuthenticated={(user) => {
-            setCurrentUser(user);
-            fetchTokenQuota();
-          }}
-        />
-      )}
+    <ThemeProvider>
+      {!authChecked ? (
+        <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-canvas text-ink">
+          <EqualizerLoader size="lg" />
+          <p className="text-xs font-mono text-ink-muted">Initializing Inflect Workspace...</p>
+        </div>
+      ) : !currentUser ? (
+        <>
+          <LandingPage
+            onOpenAuth={openAuthModal}
+            isBackendConnected={isBackendConnected}
+          />
+          <AuthModal
+            isOpen={authModalOpen}
+            initialMode={authModalMode}
+            onClose={() => setAuthModalOpen(false)}
+            onAuthenticated={(user) => {
+              setCurrentUser(user);
+              setAuthModalOpen(false);
+              fetchTokenQuota();
+            }}
+          />
+        </>
+      ) : (
+        <div className="relative min-h-screen text-ink flex flex-col">
+          <AmbientBackdrop intensity="subtle" />
 
-      {/* Top Navigation */}
-      <Navbar
-        activePreset={activePreset}
-        onOpenConfig={() => setIsConfigOpen(true)}
-        isBackendConnected={isBackendConnected}
-        activeTab={activeTab}
-        onTabChange={(tab) => setActiveTab(tab)}
-        user={currentUser}
-        tokenQuota={tokenQuota}
-        onLogout={handleLogout}
-      />
+          {/* Top Navigation */}
+          <Navbar
+            activePreset={activePreset}
+            onOpenConfig={() => setIsConfigOpen(true)}
+            isBackendConnected={isBackendConnected}
+            activeTab={activeTab}
+            onTabChange={(tab) => setActiveTab(tab)}
+            user={currentUser}
+            tokenQuota={tokenQuota}
+            onLogout={handleLogout}
+          />
 
-      {/* Main Container */}
-      <main className="mx-auto w-[92%] flex-1 py-7 space-y-6">
-        {tokenQuota?.isExhausted && (
-          <div className="rounded-xl border border-rose-500/40 bg-rose-950/30 p-4 text-xs text-rose-200 flex items-center justify-between gap-4">
-            <div>
-              <strong className="text-rose-300">Daily Token Quota Exhausted:</strong>{' '}
-              {tokenQuota.usedToday.toLocaleString()} / {tokenQuota.dailyLimit.toLocaleString()} tokens used today.
-              Your workspace quota automatically renews tomorrow at{' '}
-              <strong>{new Date(tokenQuota.renewsAtUtc).toLocaleString()}</strong>.
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveTab('analytics')}
-              className="shrink-0 rounded-lg border border-rose-400/40 bg-rose-500/20 px-3 py-1.5 font-bold text-rose-100 hover:bg-rose-500/30 cursor-pointer"
-            >
-              View Usage
-            </button>
-          </div>
-        )}
-
-        {/* TAB 1: LIVE AUDITOR */}
-        {activeTab === 'auditor' && (
-          <div className="space-y-6">
-            {/* Upload Area */}
-            <UploadDropzone
-              onFileUpload={handleFileUpload}
-              isProcessing={isProcessing}
-              processingStep={processingStep}
-              progressPct={progressPct}
-              activePreset={activePreset}
-              activeSensitivity={config.sensitivity}
-              onOpenConfig={() => setIsConfigOpen(true)}
-              stagedFile={stagedFile}
-              onStageFile={(f) => setStagedFile(f)}
-            />
-
-            {/* Error Message */}
-            {errorMessage && (
-              <div className="rounded-xl border border-rose-500/40 bg-rose-950/20 p-4 text-xs text-rose-300 flex items-start gap-3 shadow-lg shadow-rose-950/30">
-                <AlertTriangle className="h-4 w-4 text-rose-400 mt-0.5 flex-shrink-0" />
-                <div className="flex-1">
-                  <strong className="font-bold text-rose-200">Analysis Pipeline Issue:</strong> {errorMessage}
-                  <div className="mt-2 flex items-center gap-3">
-                    <button
-                      onClick={() => activeFile && handleFileUpload(activeFile)}
-                      className="rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 px-3 py-1 text-xs font-semibold transition-all border border-rose-500/30 cursor-pointer"
-                    >
-                      Retry Analysis
-                    </button>
-                    <button
-                      onClick={() => setErrorMessage(null)}
-                      className="text-slate-400 hover:text-slate-200 text-xs cursor-pointer"
-                    >
-                      Dismiss
-                    </button>
-                  </div>
+          {/* Main Container */}
+          <main className="mx-auto w-[92%] max-w-7xl flex-1 py-7 space-y-6">
+            {tokenQuota?.isExhausted && (
+              <div className="rounded-xl border border-status-red/35 bg-status-red-soft p-4 text-xs text-ink flex items-center justify-between gap-4">
+                <div>
+                  <strong className="text-status-red">Daily Token Quota Exhausted:</strong>{' '}
+                  {tokenQuota.usedToday.toLocaleString()} / {tokenQuota.dailyLimit.toLocaleString()} tokens used today.
+                  Your workspace quota automatically renews tomorrow at{' '}
+                  <strong>{new Date(tokenQuota.renewsAtUtc).toLocaleString()}</strong>.
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('analytics')}
+                  className="shrink-0 rounded-lg border border-status-red/35 bg-surface px-3 py-1.5 font-bold text-status-red hover:bg-status-red hover:text-white transition-colors cursor-pointer"
+                >
+                  View Usage
+                </button>
               </div>
             )}
 
-            {/* Analysis Results Display */}
-            {currentReport && (
-              <div className="space-y-6">
-                {/* Audio Waveform Player Bar */}
-                <AudioPlayerBar
-                  audioUrl={currentReport.audioUrl || null}
-                  fileName={currentReport.fileName}
-                  fileSize={currentReport.fileSize}
-                  durationStr={currentReport.duration}
-                  seekTime={seekTime}
+            {/* TAB 1: LIVE AUDITOR */}
+            {activeTab === 'auditor' && (
+              <div className="space-y-6 animate-fadeIn">
+                {/* Upload Area */}
+                <UploadDropzone
+                  onFileUpload={handleFileUpload}
+                  isProcessing={isProcessing}
+                  processingStep={processingStep}
+                  progressPct={progressPct}
+                  activePreset={activePreset}
+                  activeSensitivity={config.sensitivity}
+                  onOpenConfig={() => setIsConfigOpen(true)}
+                  stagedFile={stagedFile}
+                  onStageFile={(f) => setStagedFile(f)}
                 />
 
-                {/* Demeanor & Tone Evaluation Card */}
-                <ToneCard
-                  tone={currentReport.tone}
-                  callMetadata={currentReport.callMetadata}
-                  onJumpToTimestamp={(ts) => handleJumpToTimestamp(ts)}
-                />
-
-                {/* Dual Column Layout: Commitments + Diarized Transcript */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  {/* Left Column: Action Items (5 cols) */}
-                  <div className="lg:col-span-5 space-y-6">
-                    <ActionItemsList
-                      actionItems={currentReport.actionItems}
-                      onSeekTimestamp={handleJumpToTimestamp}
-                    />
-
-                    {/* Assessment Scoring Overview Card */}
-                    <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-5 text-xs">
-                      <h4 className="font-bold text-white uppercase tracking-wider text-[11px] flex items-center gap-2 mb-3">
-                        <CheckCircle2 className="h-4 w-4 text-amber-400" />
-                        ScaleWorks AI Evaluation Criteria
-                      </h4>
-                      <div className="space-y-2.5 text-slate-400">
-                        <div className="flex items-start justify-between border-b border-slate-800 pb-2">
-                          <span><strong>40% Accuracy &amp; Reliability:</strong> Evidence quotes cited directly from transcript; no hallucinations.</span>
-                          <span className="font-mono text-emerald-400 font-bold ml-2">Verified</span>
-                        </div>
-                        <div className="flex items-start justify-between border-b border-slate-800 pb-2">
-                          <span><strong>30% User Experience:</strong> Direct audio player, speaker diarization, clear RED/GREEN visual hierarchy.</span>
-                          <span className="font-mono text-emerald-400 font-bold ml-2">Active</span>
-                        </div>
-                        <div className="flex items-start justify-between">
-                          <span><strong>30% Configurability:</strong> Preset switching for multiple business types, custom rubrics &amp; sensitivity sliders.</span>
-                          <span className="font-mono text-amber-400 font-bold ml-2">Customizable</span>
-                        </div>
+                {/* Error Message */}
+                {errorMessage && (
+                  <div className="rounded-xl border border-status-red/35 bg-status-red-soft p-4 text-xs text-ink flex items-start gap-3 shadow-sm">
+                    <AlertTriangle className="h-4 w-4 text-status-red mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <strong className="font-bold text-status-red">Analysis Pipeline Issue:</strong> {errorMessage}
+                      <div className="mt-2 flex items-center gap-3">
+                        {/sign in|session expired|authentication/i.test(errorMessage) ? (
+                          <button
+                            type="button"
+                            onClick={() => openAuthModal('login')}
+                            className="rounded-lg bg-accent text-accent-fg px-3 py-1 text-xs font-bold transition-all cursor-pointer hover:bg-accent-hover"
+                          >
+                            Sign In to Workspace
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => activeFile && handleFileUpload(activeFile)}
+                            className="rounded-lg bg-status-red text-white px-3 py-1 text-xs font-semibold transition-all cursor-pointer hover:opacity-90"
+                          >
+                            Retry Analysis
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setErrorMessage(null)}
+                          className="text-ink-muted hover:text-ink text-xs cursor-pointer"
+                        >
+                          Dismiss
+                        </button>
                       </div>
                     </div>
                   </div>
+                )}
 
-                  {/* Right Column: Diarized Transcript Viewer (7 cols) */}
-                  <div className="lg:col-span-7">
-                    <TranscriptViewer
-                      transcript={currentReport.transcript}
-                      onSeekAudio={(sec) => setSeekTime(sec)}
-                      onUpdateSegment={handleUpdateTranscriptSegment}
-                      evidenceQuotes={currentReport.tone.evidenceQuotes}
-                      actionItems={currentReport.actionItems}
-                      toneRating={currentReport.tone.rating}
+                {/* Analysis Results Display */}
+                {currentReport && (
+                  <div className="space-y-6 animate-fadeIn">
+                    {/* Audio Waveform Player Bar */}
+                    <AudioPlayerBar
+                      audioUrl={currentReport.audioUrl || null}
+                      fileName={currentReport.fileName}
+                      fileSize={currentReport.fileSize}
+                      durationStr={currentReport.duration}
+                      seekTime={seekTime}
                     />
+
+                    {/* Demeanor & Tone Evaluation Card */}
+                    <ToneCard
+                      tone={currentReport.tone}
+                      callMetadata={currentReport.callMetadata}
+                      onJumpToTimestamp={(ts) => handleJumpToTimestamp(ts)}
+                    />
+
+                    {/* Dual Column Layout: Commitments + Diarized Transcript */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      {/* Left Column: Action Items (5 cols) */}
+                      <div className="lg:col-span-5 space-y-6">
+                        <ActionItemsList
+                          actionItems={currentReport.actionItems}
+                          onSeekTimestamp={handleJumpToTimestamp}
+                        />
+
+                        {/* Scoring Criteria Card */}
+                        <div className="rounded-2xl border border-subtle bg-surface p-5 text-xs">
+                          <h4 className="font-bold text-ink uppercase tracking-wider text-[11px] flex items-center gap-2 mb-3">
+                            <CheckCircle2 className="h-4 w-4 text-accent" />
+                            Inflect Evaluation Criteria
+                          </h4>
+                          <div className="space-y-2.5 text-ink-muted">
+                            <div className="flex items-start justify-between border-b border-subtle pb-2">
+                              <span><strong className="text-ink">40% Accuracy &amp; Reliability:</strong> Evidence quotes cited directly from transcript; no hallucinations.</span>
+                              <span className="font-mono text-status-green font-bold ml-2">Verified</span>
+                            </div>
+                            <div className="flex items-start justify-between border-b border-subtle pb-2">
+                              <span><strong className="text-ink">30% User Experience:</strong> Direct audio player, speaker diarization, clear RED/GREEN visual hierarchy.</span>
+                              <span className="font-mono text-status-green font-bold ml-2">Active</span>
+                            </div>
+                            <div className="flex items-start justify-between">
+                              <span><strong className="text-ink">30% Configurability:</strong> Preset switching for multiple business types, custom rubrics &amp; sensitivity sliders.</span>
+                              <span className="font-mono text-accent font-bold ml-2">Customizable</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Column: Diarized Transcript Viewer (7 cols) */}
+                      <div className="lg:col-span-7">
+                        <TranscriptViewer
+                          transcript={currentReport.transcript}
+                          onSeekAudio={(sec) => setSeekTime(sec)}
+                          onUpdateSegment={handleUpdateTranscriptSegment}
+                          evidenceQuotes={currentReport.tone.evidenceQuotes}
+                          actionItems={currentReport.actionItems}
+                          toneRating={currentReport.tone.rating}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
-          </div>
-        )}
 
-        {/* TAB 2: CALL HISTORY */}
-        {activeTab === 'history' && (
-          <CallHistoryView onSelectCall={handleSelectHistoricalCall} />
-        )}
+            {/* TAB 2: CALL HISTORY */}
+            {activeTab === 'history' && (
+              <CallHistoryView onSelectCall={handleSelectHistoricalCall} />
+            )}
 
-        {/* TAB 3: COMMITMENTS BOARD */}
-        {activeTab === 'commitments' && (
-          <CommitmentsBoard />
-        )}
+            {/* TAB 3: COMMITMENTS BOARD */}
+            {activeTab === 'commitments' && (
+              <CommitmentsBoard />
+            )}
 
-        {/* TAB 4: ANALYTICS DASHBOARD */}
-        {activeTab === 'analytics' && (
-          <AnalyticsDashboard />
-        )}
-      </main>
+            {/* TAB 4: ANALYTICS DASHBOARD */}
+            {activeTab === 'analytics' && (
+              <AnalyticsDashboard />
+            )}
 
-      {/* Slide-over Configurability Drawer */}
-      <ConfigDrawer
-        isOpen={isConfigOpen}
-        onClose={() => setIsConfigOpen(false)}
-        config={config}
-        onSaveConfig={(newConfig) => setConfig(newConfig)}
-        hasLoadedCall={!!activeFile || !!currentReport?.assetId}
-        onReanalyzeLoadedCall={handleReanalyze}
-      />
+            {/* TAB 5: ADMIN WORKSPACE */}
+            {activeTab === 'admin' && currentUser?.role === 'ADMIN' && (
+              <WorkspaceAdminView tokenQuota={tokenQuota} onQuotaUpdated={fetchTokenQuota} />
+            )}
+          </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 text-center text-xs text-slate-500">
-        ScaleWorks AI Engineering Assessment &bull; Forward Deployed Engineer &bull; Enterprise Call Intelligence
-      </footer>
-    </div>
+          {/* Slide-over Configurability Drawer */}
+          <ConfigDrawer
+            isOpen={isConfigOpen}
+            onClose={() => setIsConfigOpen(false)}
+            config={config}
+            onSaveConfig={(newConfig) => setConfig(newConfig)}
+            hasLoadedCall={!!activeFile || !!currentReport?.assetId}
+            onReanalyzeLoadedCall={handleReanalyze}
+          />
+
+          {/* Footer */}
+          <footer className="border-t border-subtle bg-surface/60 py-4 text-center text-xs text-ink-muted">
+            Inflect &bull; Multi-Tenant Conversation Intelligence &amp; Call QA Platform
+          </footer>
+
+          <AuthModal
+            isOpen={authModalOpen}
+            initialMode={authModalMode}
+            onClose={() => setAuthModalOpen(false)}
+            onAuthenticated={(user) => {
+              setCurrentUser(user);
+              setAuthModalOpen(false);
+              setErrorMessage(null);
+              fetchTokenQuota();
+            }}
+          />
+        </div>
+      )}
+    </ThemeProvider>
   );
 };

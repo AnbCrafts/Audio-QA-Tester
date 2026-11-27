@@ -2,22 +2,31 @@ import React, { useState, useEffect } from 'react';
 import {
   History,
   Search,
-  Filter,
   CheckCircle2,
   AlertTriangle,
-  Play,
   Trash2,
-  Clock,
   ArrowRight,
   RefreshCw,
   FileAudio,
-  Sparkles,
 } from 'lucide-react';
-import { CallHistoryItem } from '../types';
-import { API_BASE_URL } from '../config';
+import { CallHistoryItem } from '@/types';
+import { API_BASE_URL } from '@/config';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { EqualizerLoader } from '@/components/reactbits/EqualizerLoader';
 
 interface CallHistoryViewProps {
-  onSelectCall: (callId: string) => void;
+  onSelectCall: (callId: string, seekSeconds?: number | null) => void;
 }
 
 export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }) => {
@@ -86,39 +95,39 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fadeIn">
       {/* Top Banner & Filters */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-sm">
+      <Card className="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="flex items-center gap-2 text-xl font-bold text-slate-100">
-            <History className="h-5 w-5 text-amber-400" />
+          <h2 className="font-display flex items-center gap-2 text-xl font-extrabold text-ink">
+            <History className="h-5 w-5 text-accent" />
             Historical Call Explorer
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Database-persisted audits. Click any call to reload its waveform audio player, synced transcript, and scores.
+          <p className="text-xs text-ink-muted mt-0.5">
+            Database-persisted audits &amp; full-text spoken transcript search. Click any match to jump directly to that moment.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Search Form */}
-          <form onSubmit={handleSearchSubmit} className="relative min-w-[240px]">
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <input
+          <form onSubmit={handleSearchSubmit} className="relative min-w-[260px]">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-ink-muted" />
+            <Input
               type="text"
-              placeholder="Search filename or topic..."
+              placeholder="Search filenames, topics, or spoken transcript..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full rounded-lg border border-slate-700 bg-slate-950/80 pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+              className="pl-9"
             />
           </form>
 
-          {/* Tone Filter Buttons */}
-          <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950/60 p-0.5 text-xs">
+          <div className="flex items-center rounded-xl border border-subtle bg-canvas p-1 text-xs">
             <button
               type="button"
               onClick={() => setToneFilter('ALL')}
-              className={`rounded-md px-3 py-1 font-medium transition-all ${
-                toneFilter === 'ALL' ? 'bg-slate-800 text-amber-400 shadow-sm' : 'text-slate-400 hover:text-slate-200'
+              className={`rounded-lg px-3 py-1 font-bold transition-all cursor-pointer ${
+                toneFilter === 'ALL'
+                  ? 'bg-accent text-accent-fg shadow-xs'
+                  : 'text-ink-muted hover:text-ink'
               }`}
             >
               All
@@ -126,8 +135,10 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
             <button
               type="button"
               onClick={() => setToneFilter('GREEN')}
-              className={`rounded-md px-3 py-1 font-medium transition-all ${
-                toneFilter === 'GREEN' ? 'bg-emerald-500/20 text-emerald-400 shadow-sm' : 'text-slate-400 hover:text-emerald-300'
+              className={`rounded-lg px-3 py-1 font-bold transition-all cursor-pointer ${
+                toneFilter === 'GREEN'
+                  ? 'bg-status-green text-white shadow-xs'
+                  : 'text-ink-muted hover:text-status-green'
               }`}
             >
               Compliant
@@ -135,150 +146,162 @@ export const CallHistoryView: React.FC<CallHistoryViewProps> = ({ onSelectCall }
             <button
               type="button"
               onClick={() => setToneFilter('RED')}
-              className={`rounded-md px-3 py-1 font-medium transition-all ${
-                toneFilter === 'RED' ? 'bg-rose-500/20 text-rose-400 shadow-sm' : 'text-slate-400 hover:text-rose-300'
+              className={`rounded-lg px-3 py-1 font-bold transition-all cursor-pointer ${
+                toneFilter === 'RED'
+                  ? 'bg-status-red text-white shadow-xs'
+                  : 'text-ink-muted hover:text-status-red'
               }`}
             >
               Red Flags
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={() => fetchHistory(null)}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800/80 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-amber-400 transition-all"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => fetchHistory(null)}>
             <RefreshCw className="h-3.5 w-3.5" />
             Refresh
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Table Content */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/40 backdrop-blur-sm overflow-hidden">
+      <Card className="overflow-hidden">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-            <RefreshCw className="h-7 w-7 animate-spin text-amber-400 mb-3" />
+          <div className="flex flex-col items-center justify-center py-16 text-ink-muted gap-3">
+            <EqualizerLoader size="md" />
             <p className="text-sm font-medium">Fetching audits from database...</p>
           </div>
         ) : error ? (
-          <div className="p-8 text-center text-rose-400 text-sm">
-            <AlertTriangle className="h-6 w-6 mx-auto mb-2 text-rose-400" />
+          <div className="p-8 text-center text-status-red text-sm">
+            <AlertTriangle className="h-6 w-6 mx-auto mb-2" />
             {error}
           </div>
         ) : history.length === 0 ? (
-          <div className="p-12 text-center text-slate-400">
-            <FileAudio className="h-10 w-10 mx-auto mb-3 text-slate-600" />
-            <h3 className="text-base font-semibold text-slate-300">No Audited Calls Found</h3>
-            <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+          <div className="p-12 text-center text-ink-muted">
+            <FileAudio className="h-10 w-10 mx-auto mb-3 opacity-50" />
+            <h3 className="text-base font-bold text-ink">No Audited Calls Found</h3>
+            <p className="text-xs text-ink-muted mt-1 max-w-sm mx-auto">
               Upload an audio recording in the Live Auditor tab to generate and permanently store your first call audit.
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">Date / Time</th>
-                  <th className="py-3 px-4">Audio Recording</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Demeanor Score</th>
-                  <th className="py-3 px-4">Commitments</th>
-                  <th className="py-3 px-4">Turns</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/60 text-slate-300">
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Date / Time</TableHead>
+                  <TableHead>Audio Recording</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Demeanor Score</TableHead>
+                  <TableHead>Commitments</TableHead>
+                  <TableHead>Turns</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {history.map((call) => {
                   const isRed = call.toneRating === 'RED';
                   return (
-                    <tr
+                    <TableRow
                       key={call.id}
                       onClick={() => onSelectCall(call.id)}
-                      className="group cursor-pointer hover:bg-slate-800/40 transition-colors"
+                      className="cursor-pointer"
                     >
-                      <td className="py-3 px-4 whitespace-nowrap text-slate-400 font-mono text-[11px]">
+                      <TableCell className="whitespace-nowrap text-ink-muted font-mono text-[11px]">
                         {call.createdAt}
-                      </td>
-                      <td className="py-3 px-4 font-medium text-slate-100 flex items-center gap-2">
-                        <FileAudio className="h-4 w-4 text-amber-400 flex-shrink-0" />
-                        <span className="truncate max-w-[200px]" title={call.filename}>
-                          {call.filename}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-mono">({call.duration})</span>
-                      </td>
-                      <td className="py-3 px-4 text-slate-300 whitespace-nowrap">
-                        <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300 border border-slate-700/60">
-                          {call.category}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold border ${
-                            isRed
-                              ? 'border-rose-500/30 bg-rose-500/10 text-rose-400'
-                              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                          }`}
-                        >
-                          {isRed ? (
-                            <AlertTriangle className="h-3 w-3 text-rose-400" />
-                          ) : (
-                            <CheckCircle2 className="h-3 w-3 text-emerald-400" />
-                          )}
-                          {call.overallScore.toFixed(1)} / 5.0
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span className="rounded-md bg-amber-500/10 text-amber-400 px-2 py-0.5 text-[11px] font-bold border border-amber-500/20">
-                          {call.commitmentsCount} Tasks
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap text-slate-400 font-mono text-[11px]">
-                        {call.turnsCount} turns
-                      </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-2">
+                      </TableCell>
+                      <TableCell className="font-semibold text-ink">
+                        <div className="flex items-center gap-2">
+                          <FileAudio className="h-4 w-4 text-accent flex-shrink-0" />
+                          <span className="truncate max-w-[200px]" title={call.filename}>
+                            {call.filename}
+                          </span>
+                          <span className="text-[10px] text-ink-muted font-mono">
+                            ({call.duration})
+                          </span>
+                        </div>
+                        {call.matchedSnippet && (
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              onSelectCall(call.id, call.matchedSeconds ?? 0);
+                            }}
+                            className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-accent-soft border border-accent/30 px-2 py-0.5 text-[11px] text-ink hover:border-accent text-left cursor-pointer"
+                          >
+                            <span className="font-mono text-accent font-bold shrink-0">
+                              [{call.matchedTimestamp || '00:00'}]
+                            </span>
+                            <span className="truncate max-w-[260px]">"{call.matchedSnippet}"</span>
+                          </button>
+                        )}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge variant="default" className="rounded-md">
+                          {call.category}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge variant={isRed ? 'red' : 'green'}>
+                          {isRed ? (
+                            <AlertTriangle className="h-3 w-3" />
+                          ) : (
+                            <CheckCircle2 className="h-3 w-3" />
+                          )}
+                          {call.overallScore.toFixed(1)} / 5.0
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge variant="accent" className="rounded-md">
+                          {call.commitmentsCount} Tasks
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-ink-muted font-mono text-[11px]">
+                        {call.turnsCount} turns
+                      </TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               onSelectCall(call.id);
                             }}
-                            className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-400 hover:bg-amber-400 hover:text-slate-950 transition-all border border-amber-500/30"
                           >
                             <span>Open Audit</span>
                             <ArrowRight className="h-3 w-3" />
-                          </button>
+                          </Button>
                           <button
                             type="button"
                             onClick={(e) => handleDelete(call.id, e)}
-                            className="rounded p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                            className="rounded-lg p-1.5 text-ink-muted hover:text-status-red hover:bg-status-red-soft transition-colors cursor-pointer"
                             title="Delete Record"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
             {hasMore && nextCursor && (
-              <div className="border-t border-slate-800 p-4 text-center">
-                <button
+              <div className="border-t border-subtle p-4 text-center">
+                <Button
                   type="button"
+                  variant="outline"
                   disabled={isLoadingMore}
                   onClick={() => fetchHistory(nextCursor)}
-                  className="rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-bold text-amber-300 hover:bg-slate-700 transition-all cursor-pointer disabled:opacity-50"
                 >
                   {isLoadingMore ? 'Loading more calls...' : 'Load More Calls'}
-                </button>
+                </Button>
               </div>
             )}
-          </div>
+          </>
         )}
-      </div>
+      </Card>
     </div>
   );
 };

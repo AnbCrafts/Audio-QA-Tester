@@ -4,6 +4,8 @@
 !.env.example
 *.pem
 *.key
+.dev_jwt_secret
+backend/.dev_jwt_secret
 
 # Python
 __pycache__/
@@ -51,6 +53,7 @@ temp/
 *.db
 backend/*.db
 backend/scaleworks.db
+backend/inflect.db
 *.tmp
 
 # OS & Editor

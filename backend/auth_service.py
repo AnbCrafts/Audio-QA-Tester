@@ -8,14 +8,32 @@ from dataclasses import dataclass
 from typing import Optional
 from fastapi import Depends, HTTPException, Request
 
-# Ephemeral dev fallback if JWT_SECRET_KEY is not configured
-_RUNTIME_DEV_SECRET = secrets.token_urlsafe(32)
-COOKIE_NAME = "scaleworks_token"
+# Persistent local dev fallback so uvicorn --reload / workers keep valid sessions when JWT_SECRET_KEY is unset
+_DEV_SECRET_PATH = os.path.join(os.path.dirname(__file__), ".dev_jwt_secret")
+_RUNTIME_DEV_SECRET: Optional[str] = None
+COOKIE_NAME = "inflect_token"
 
 
 def _get_jwt_secret() -> bytes:
-    secret = os.getenv("JWT_SECRET_KEY", "").strip() or _RUNTIME_DEV_SECRET
-    return secret.encode("utf-8")
+    global _RUNTIME_DEV_SECRET
+    env_secret = os.getenv("JWT_SECRET_KEY", "").strip()
+    if env_secret:
+        return env_secret.encode("utf-8")
+    if _RUNTIME_DEV_SECRET is None:
+        if os.path.isfile(_DEV_SECRET_PATH):
+            try:
+                with open(_DEV_SECRET_PATH, "r", encoding="utf-8") as f:
+                    _RUNTIME_DEV_SECRET = f.read().strip()
+            except OSError:
+                _RUNTIME_DEV_SECRET = None
+        if not _RUNTIME_DEV_SECRET:
+            _RUNTIME_DEV_SECRET = secrets.token_urlsafe(32)
+            try:
+                with open(_DEV_SECRET_PATH, "w", encoding="utf-8") as f:
+                    f.write(_RUNTIME_DEV_SECRET)
+            except OSError:
+                pass
+    return _RUNTIME_DEV_SECRET.encode("utf-8")
 
 
 def _b64url_encode(raw: bytes) -> str:

@@ -160,7 +160,10 @@ export async function uploadFileInChunks(
 
   if (!initRes.ok) {
     const errJson = await initRes.json().catch(() => ({}));
-    throw new Error(errJson.detail || `Failed to initialize upload (${initRes.status})`);
+    throw Object.assign(
+      new Error(errJson.detail || `Failed to initialize upload (${initRes.status})`),
+      { status: initRes.status }
+    );
   }
 
   const initData = await initRes.json();

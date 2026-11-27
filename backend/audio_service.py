@@ -214,6 +214,46 @@ def _enforce_forbidden_phrases_guard(report: AnalysisReport, config: AnalysisCon
                 return report
     return report
 
+
+def _apply_deterministic_post_guards(report: AnalysisReport, config: AnalysisConfigInput) -> AnalysisReport:
+    """
+    Layer 3 & 4 Deterministic Post-LLM Guardrails:
+    1. Guarantees customForbiddenPhrases spoken by Rep always trigger RED.
+    2. Enforces sensitivity cutoff (low=50, balanced=65, strict=80) in code so
+       negative prompts cannot sneak low-scoring calls through as GREEN.
+    3. Reconciles ungrounded RED verdicts that have high demeanor scores (>=85),
+       zero forbidden phrase matches, and zero supporting violation evidence.
+    """
+    phrases = [p.strip().lower() for p in (config.customForbiddenPhrases or []) if p and p.strip()]
+    matched_forbidden = any(
+        seg.isRep and any(p in seg.text.lower() for p in phrases)
+        for seg in report.transcript
+    )
+    report = _enforce_forbidden_phrases_guard(report, config)
+
+    sb = report.tone.sentimentBreakdown
+    rep_avg = (sb.repProfessionalism + sb.repEmpathy + sb.repPatience) / 3.0
+    threshold = {"low": 50, "balanced": 65, "strict": 80}.get(config.sensitivity, 65)
+
+    if rep_avg < threshold and report.tone.rating == "GREEN":
+        report.tone.rating = "RED"
+        note = f" (Deterministic threshold guard: Rep demeanor avg {rep_avg:.1f} < {threshold} for {config.sensitivity} sensitivity.)"
+        if note not in report.tone.explanation:
+            report.tone.explanation = (report.tone.explanation or "").strip() + note
+    elif (
+        report.tone.rating == "RED"
+        and not matched_forbidden
+        and rep_avg >= 85.0
+        and len(report.tone.evidenceQuotes) == 0
+    ):
+        report.tone.rating = "GREEN"
+        note = " (Deterministic consistency guard: reconciled ungrounded RED rating with high demeanor scores and zero violation evidence.)"
+        if note not in report.tone.explanation:
+            report.tone.explanation = (report.tone.explanation or "").strip() + note
+
+    return report
+
+
 def analyze_call_with_ai(
     file_path: str,
     filename: str,
@@ -235,7 +275,7 @@ def analyze_call_with_ai(
     if config.aiProvider == "groq" and groq_key:
         try:
             report = _call_groq(file_path, filename, file_size_str, config, system_prompt, org_id=org_id, job_id=job_id)
-            return _enforce_forbidden_phrases_guard(report, config)
+            return _apply_deterministic_post_guards(report, config)
         except Exception as e:
             groq_error = str(e)
             print(f"[Warning] Groq direct call failed: {e}. Falling back to Gemini...")
@@ -243,7 +283,7 @@ def analyze_call_with_ai(
     if gemini_key:
         try:
             report = _call_gemini(file_path, filename, file_size_str, config, system_prompt, org_id=org_id, job_id=job_id)
-            return _enforce_forbidden_phrases_guard(report, config)
+            return _apply_deterministic_post_guards(report, config)
         except Exception as e:
             gemini_error = str(e)
             print(f"[Warning] Gemini failed: {e}. Failing over to Groq...")
@@ -251,7 +291,7 @@ def analyze_call_with_ai(
     if groq_key:
         try:
             report = _call_groq(file_path, filename, file_size_str, config, system_prompt, org_id=org_id, job_id=job_id)
-            return _enforce_forbidden_phrases_guard(report, config)
+            return _apply_deterministic_post_guards(report, config)
         except Exception as e:
             groq_error = str(e)
             print(f"[Warning] Groq fallback failed: {e}.")
@@ -267,6 +307,9 @@ def analyze_call_with_ai(
         err_msg = "No API keys configured. Please add GEMINI_API_KEY or GROQ_API_KEY in backend/.env"
 
     raise RuntimeError(err_msg)
+
+
+GEMINI_CANDIDATE_MODELS = ["gemini-3.5-flash", "gemini-3.5-flash-lite"]
 
 
 def _call_gemini(
@@ -307,7 +350,7 @@ Listen to the attached audio call recording ({filename}).
    - Extract confirmed commitments only (reject hedged "maybe"/"if possible" phrases). Set deadline to null if not explicitly spoken.
 """
 
-        candidate_models = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+        candidate_models = GEMINI_CANDIDATE_MODELS
         last_err = None
 
         for model_name in candidate_models:
@@ -567,7 +610,7 @@ MANDATORY RE-ANALYSIS RULES:
             from google import genai
             from google.genai import types
             gemini_client = genai.Client(api_key=gemini_key)
-            for m in ["gemini-flash-latest", "gemini-flash-lite-latest"]:
+            for m in GEMINI_CANDIDATE_MODELS:
                 try:
                     resp = gemini_circuit.call(
                         lambda mod=m: execute_with_retry_jitter(
@@ -599,7 +642,7 @@ MANDATORY RE-ANALYSIS RULES:
     data["duration"] = duration_str
     data["transcript"] = cached_segments
     report = _build_report_from_json(data, filename, file_size_str, config, engine_name=engine_name)
-    return _enforce_forbidden_phrases_guard(report, config)
+    return _apply_deterministic_post_guards(report, config)
 
 def _build_report_from_json(
     data: dict,
@@ -800,7 +843,7 @@ TRANSCRIPTION & ACOUSTIC NOTES RULES:
     try:
         uploaded_chunk = _upload_and_wait_active(client, chunk_spec.file_path, max_wait_seconds=120)
         last_err = None
-        for model_name in ["gemini-flash-latest", "gemini-flash-lite-latest"]:
+        for model_name in GEMINI_CANDIDATE_MODELS:
             try:
                 response = gemini_circuit.call(
                     lambda m=model_name: execute_with_retry_jitter(
@@ -962,7 +1005,7 @@ REQUIREMENTS:
 
     if gemini_key and gemini_circuit.state() == "CLOSED":
         client = genai.Client(api_key=gemini_key)
-        for model_name in ["gemini-flash-latest", "gemini-flash-lite-latest"]:
+        for model_name in GEMINI_CANDIDATE_MODELS:
             try:
                 resp = gemini_circuit.call(
                     lambda m=model_name: execute_with_retry_jitter(
@@ -1019,4 +1062,4 @@ REQUIREMENTS:
     data["duration"] = duration_str
     data["transcript"] = merged_segments
     report = _build_report_from_json(data, filename, file_size_str, config, engine_name=engine_name)
-    return _enforce_forbidden_phrases_guard(report, config)
+    return _apply_deterministic_post_guards(report, config)

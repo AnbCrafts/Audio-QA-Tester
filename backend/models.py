@@ -313,3 +313,47 @@ class TokenUsageLedgerModel(Base):
     total_tokens = Column(Integer, default=0, nullable=False)
     estimated_cost_usd = Column(Float, default=0.0, nullable=False)
     created_at = Column(DateTime, default=utcnow_naive)
+
+
+class AuditLogModel(Base):
+    """Immutable audit trail for sensitive workspace & compliance actions."""
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_org_created", "org_id", "created_at", "id"),)
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(String, ForeignKey("organizations.id"), index=True, nullable=False)
+    actor_user_id = Column(String, nullable=False)
+    actor_email = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    target_id = Column(String, nullable=True)
+    metadata_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=utcnow_naive)
+
+
+class WebhookEndpointModel(Base):
+    """Tenant-registered outbound webhook target for real-time escalations."""
+    __tablename__ = "webhook_endpoints"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(String, ForeignKey("organizations.id"), index=True, nullable=False)
+    url = Column(String, nullable=False)
+    secret = Column(String, nullable=False)
+    events_json = Column(JSON, default=list)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive)
+
+
+class WebhookDeliveryModel(Base):
+    """Delivery attempts and Dead-Letter Queue state for outbound webhooks."""
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (Index("ix_webhook_deliveries_org_created", "org_id", "created_at"),)
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(String, ForeignKey("organizations.id"), index=True, nullable=False)
+    endpoint_id = Column(String, ForeignKey("webhook_endpoints.id"), index=True, nullable=False)
+    event_type = Column(String, nullable=False)
+    payload_json = Column(JSON, default=dict)
+    status = Column(String, default="PENDING", nullable=False)  # "PENDING" | "DELIVERED" | "DEAD_LETTER"
+    attempts = Column(Integer, default=0, nullable=False)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow_naive)

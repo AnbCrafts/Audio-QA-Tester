@@ -1,10 +1,77 @@
+import re
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SensitivityLevel = Literal['low', 'balanced', 'strict']
 ActionItemScope = Literal['explicit_commitments', 'all_followups', 'strict_deadlines_only']
 BusinessPresetId = Literal['saas_sales', 'debt_collection', 'real_estate', 'custom']
- 
+
+_BLOCKED_RUBRIC_RULES = [
+    (
+        re.compile(
+            r"\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(previous|prior|above|system|core|all)\b.{0,25}\b(instructions?|rules?|prompts?|rubric|guards?|scoring)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot contain system prompt override instructions.",
+    ),
+    (
+        re.compile(
+            r"\b(reveal|print|dump|show)\b.{0,25}\b(system prompt|hidden instructions)\b",
+            re.IGNORECASE,
+        ),
+        "Criteria cannot request system prompt disclosure.",
+    ),
+    (
+        re.compile(
+            r"\b(mark|flag|rate|score)\b.{0,35}\bred\b.{0,35}\b(polite\w*|respectful\w*|helpful\w*|courteous\w*|patient\w*|friendly|kind|calm)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot penalize polite, respectful, or patient representative behavior as RED.",
+    ),
+    (
+        re.compile(
+            r"\b(penalize|punish)\b.{0,25}\b(polite\w*|respectful\w*|helpful\w*|courteous\w*|empathy|patience)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot penalize polite or empathetic representative behavior.",
+    ),
+    (
+        re.compile(
+            r"\b(always|force|must)\b.{0,25}\b(mark|rate|return|score)?\b.{0,25}\bgreen\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot force calls to always be rated GREEN regardless of conduct.",
+    ),
+    (
+        re.compile(
+            r"\b(ignore|excuse|allow|never\s+flag)\b.{0,30}\b(insults?|hostil\w*|rude\w*|abus\w*|sarcas\w*|profan\w*|slurs?)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot excuse insults, hostility, or abusive language.",
+    ),
+    (
+        re.compile(
+            r"\b(invent|fabricate|make\s+up|hallucinate)\b.{0,25}\b(deadlines?|quotes?|transcripts?|dates?)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot instruct the AI to fabricate deadlines, quotes, or transcripts.",
+    ),
+    (
+        re.compile(
+            r"\b(do\s+not\s+output|skip|omit)\b.{0,25}\b(json|transcript|evidence)\b",
+            re.IGNORECASE | re.DOTALL,
+        ),
+        "Criteria cannot disable JSON formatting, transcription, or evidence grounding.",
+    ),
+]
+
+
+def sanitize_rubric_text(value: str) -> str:
+    """Strips XML/tag characters and normalizes whitespace to prevent prompt breakout."""
+    cleaned = value.replace("<", "[").replace(">", "]")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 class AnalysisConfigInput(BaseModel):
     presetId: BusinessPresetId = 'saas_sales'
     presetName: str = Field(default='B2B SaaS Sales', max_length=120)
@@ -17,6 +84,34 @@ class AnalysisConfigInput(BaseModel):
     customForbiddenPhrases: List[str] = Field(default_factory=list, max_length=50)
     repSpeakerId: Literal['auto', 'Speaker 0', 'Speaker 1'] = 'auto'
     aiProvider: Literal['gemini', 'groq'] = 'gemini'
+
+    @field_validator("presetName")
+    @classmethod
+    def _clean_preset_name(cls, v: str) -> str:
+        return sanitize_rubric_text(v) or "Custom Rubric"
+
+    @field_validator("toneCriteria")
+    @classmethod
+    def _validate_tone_criteria(cls, v: str) -> str:
+        cleaned = sanitize_rubric_text(v)
+        for pattern, error_msg in _BLOCKED_RUBRIC_RULES:
+            if pattern.search(cleaned):
+                raise ValueError(error_msg)
+        return cleaned
+
+    @field_validator("customForbiddenPhrases")
+    @classmethod
+    def _validate_forbidden_phrases(cls, phrases: List[str]) -> List[str]:
+        cleaned_list: List[str] = []
+        for phrase in phrases:
+            c = sanitize_rubric_text(phrase)[:100]
+            if not c:
+                continue
+            for pattern, error_msg in _BLOCKED_RUBRIC_RULES:
+                if pattern.search(c):
+                    raise ValueError(error_msg)
+            cleaned_list.append(c)
+        return cleaned_list
 
 class EvidenceQuote(BaseModel):
     quote: str
@@ -149,6 +244,9 @@ class CallHistoryItem(BaseModel):
     commitmentsCount: int
     turnsCount: int
     createdAt: str
+    matchedSnippet: Optional[str] = None
+    matchedTimestamp: Optional[str] = None
+    matchedSeconds: Optional[int] = None
 
 class CommitmentStatusUpdate(BaseModel):
     status: Literal['PENDING', 'IN_PROGRESS', 'COMPLETED']
@@ -223,3 +321,96 @@ class UserProfileResponse(BaseModel):
     orgId: str
     orgName: str
     role: Literal['ADMIN', 'MEMBER']
+
+
+class TranscriptSegmentUpdateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    speaker: str = Field(min_length=1, max_length=80)
+
+
+class CoachingInsightsResponse(BaseModel):
+    totalCalls: int
+    weakestDimension: Optional[str] = None
+    weakestDimensionAvg: float = 0.0
+    dimensionAverages: dict = Field(default_factory=dict)
+    topEscalationCategory: Optional[str] = None
+    topEscalationRate: float = 0.0
+    latestRedQuote: Optional[dict] = None
+    deadlineGroundingPct: float = 0.0
+
+
+class TranscriptSearchHit(BaseModel):
+    callId: str
+    segmentId: str
+    filename: str
+    toneRating: Literal['GREEN', 'RED']
+    speaker: str
+    timestamp: str
+    seconds: int
+    text: str
+    createdAt: str
+
+
+class PaginatedSearchResponse(BaseModel):
+    items: List[TranscriptSearchHit]
+    hasMore: bool = False
+
+
+class CreateMemberRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=6, max_length=128)
+    fullName: str = Field(default="", max_length=120)
+    role: Literal['ADMIN', 'MEMBER'] = 'MEMBER'
+
+
+class UpdateMemberRoleRequest(BaseModel):
+    role: Literal['ADMIN', 'MEMBER']
+
+
+class OrgMemberItem(BaseModel):
+    userId: str
+    email: str
+    fullName: str
+    role: Literal['ADMIN', 'MEMBER']
+    createdAt: str
+
+
+class AuditLogItem(BaseModel):
+    id: str
+    actorEmail: str
+    action: str
+    targetId: Optional[str] = None
+    metadata: dict = Field(default_factory=dict)
+    createdAt: str
+
+
+class PaginatedAuditLogsResponse(BaseModel):
+    items: List[AuditLogItem]
+    nextCursor: Optional[str] = None
+    hasMore: bool = False
+
+
+class WebhookCreateRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=500)
+    events: List[Literal['call.completed', 'call.red_flag_detected', 'commitment.created']] = Field(
+        default_factory=lambda: ['call.completed', 'call.red_flag_detected']
+    )
+
+
+class WebhookEndpointItem(BaseModel):
+    id: str
+    url: str
+    events: List[str]
+    isActive: bool
+    secretPreview: str
+    createdAt: str
+
+
+class WebhookDeliveryItem(BaseModel):
+    id: str
+    endpointId: str
+    eventType: str
+    status: str
+    attempts: int
+    lastError: Optional[str] = None
+    createdAt: str

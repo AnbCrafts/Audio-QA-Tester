@@ -58,6 +58,73 @@ export interface CallHistoryItem {
   commitmentsCount: number;
   turnsCount: number;
   createdAt: string;
+  matchedSnippet?: string | null;
+  matchedTimestamp?: string | null;
+  matchedSeconds?: number | null;
+}
+
+export interface CoachingInsights {
+  totalCalls: number;
+  weakestDimension?: string | null;
+  weakestDimensionAvg: number;
+  dimensionAverages: Record<string, number>;
+  topEscalationCategory?: string | null;
+  topEscalationRate: number;
+  latestRedQuote?: {
+    callId: string;
+    filename: string;
+    quote: string;
+    createdAt: string;
+  } | null;
+  deadlineGroundingPct: number;
+}
+
+export interface TranscriptSearchHit {
+  callId: string;
+  segmentId: string;
+  filename: string;
+  toneRating: 'GREEN' | 'RED';
+  speaker: string;
+  timestamp: string;
+  seconds: number;
+  text: string;
+  createdAt: string;
+}
+
+export interface OrgMemberItem {
+  userId: string;
+  email: string;
+  fullName: string;
+  role: 'ADMIN' | 'MEMBER';
+  createdAt: string;
+}
+
+export interface AuditLogItem {
+  id: string;
+  actorEmail: string;
+  action: string;
+  targetId?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface WebhookEndpointItem {
+  id: string;
+  url: string;
+  events: string[];
+  isActive: boolean;
+  secretPreview: string;
+  createdAt: string;
+}
+
+export interface WebhookDeliveryItem {
+  id: string;
+  endpointId: string;
+  eventType: string;
+  status: string;
+  attempts: number;
+  lastError?: string | null;
+  createdAt: string;
 }
 
 export interface AnalyticsOverview {

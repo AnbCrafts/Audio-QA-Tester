@@ -3,6 +3,7 @@ import re
 import uuid
 import json
 import hashlib
+import secrets
 import tempfile
 import asyncio
 from contextlib import asynccontextmanager
@@ -13,20 +14,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, case, or_, and_
+from sqlalchemy import desc, func, case, or_, and_, exists, text as sql_text
 
 # Load environment variables before database/service imports
 load_dotenv()
 
-from database import get_db, run_schema_migrations, SessionLocal
+from database import get_db, run_schema_migrations, SessionLocal, DATABASE_URL
 from models import (
     OrganizationModel,
     UserModel,
     CallAuditModel,
+    TranscriptSegmentModel,
     CommitmentModel,
     AudioAssetModel,
     UploadSessionModel,
     AnalysisJobModel,
+    AuditLogModel,
+    WebhookEndpointModel,
+    WebhookDeliveryModel,
     utcnow_naive,
 )
 from schemas import (
@@ -48,7 +53,20 @@ from schemas import (
     AnalyzeAssetRequest,
     AnalysisJobCreateResponse,
     AnalysisJobStatusResponse,
+    TranscriptSegmentUpdateRequest,
+    CoachingInsightsResponse,
+    TranscriptSearchHit,
+    PaginatedSearchResponse,
+    CreateMemberRequest,
+    UpdateMemberRoleRequest,
+    OrgMemberItem,
+    AuditLogItem,
+    PaginatedAuditLogsResponse,
+    WebhookCreateRequest,
+    WebhookEndpointItem,
+    WebhookDeliveryItem,
 )
+from webhook_service import record_audit_log, validate_webhook_url
 from audio_service import analyze_call_with_ai, reanalyze_from_transcript
 from audio_chunker import probe_audio_duration
 from storage_service import (
@@ -138,7 +156,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="ScaleWorks AI - Enterprise Call Quality Intelligence Platform",
+    title="Inflect - Call Quality & Conversation Intelligence Platform",
     description="Multi-tenant Backend API with Chunked Resumable Uploads, 1-Hr Map-Reduce, SQL Aggregations, AI Resilience, and Per-Tenant Daily Token Quotas.",
     version="3.0.0",
     lifespan=lifespan,
@@ -329,7 +347,7 @@ def health_check(db: Session = Depends(get_db)):
 
     return {
         "status": "healthy",
-        "service": "ScaleWorks Call Quality Agent",
+        "service": "Inflect Call Intelligence Engine",
         "gemini_configured": bool(gemini_key),
         "groq_configured": bool(groq_key),
         "database_connected": db_ok,
@@ -339,9 +357,19 @@ def health_check(db: Session = Depends(get_db)):
 
 
 @app.delete("/api/cache")
-def clear_cache(user: AuthUser = Depends(require_admin)):
+def clear_cache(user: AuthUser = Depends(require_admin), db: Session = Depends(get_db)):
     deleted = clear_all_cache(org_id=user.org_id)
     analytics_single_flight.invalidate(user.org_id)
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="CACHE_CLEARED",
+        target_id=user.org_id,
+        metadata={"deletedEntries": deleted},
+    )
+    db.commit()
     return {"status": "cache_cleared", "deleted_entries": deleted}
 
 
@@ -362,7 +390,17 @@ def update_tenant_token_quota(
     org = db.query(OrganizationModel).filter(OrganizationModel.id == user.org_id).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found.")
+    old_limit = org.daily_token_limit
     org.daily_token_limit = payload.dailyLimit
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="QUOTA_UPDATED",
+        target_id=user.org_id,
+        metadata={"previousLimit": old_limit, "dailyLimit": payload.dailyLimit},
+    )
     db.commit()
     return get_org_daily_token_status(db, user.org_id)
 
@@ -921,6 +959,27 @@ async def analyze_call(
 # HISTORICAL CALL EXPLORER ENDPOINTS (KEYSET CURSOR + ZERO N+1)
 # =============================================================================
 
+def _is_postgresql(db: Session) -> bool:
+    """Detects whether the active SQLAlchemy Session runs on PostgreSQL vs SQLite."""
+    if db.bind is not None:
+        return db.bind.dialect.name == "postgresql"
+    return not DATABASE_URL.startswith("sqlite")
+
+
+def _build_snippet(text: str, query_term: str, max_len: int = 140) -> str:
+    clean_text = " ".join((text or "").split())
+    if len(clean_text) <= max_len:
+        return clean_text
+    idx = clean_text.lower().find(query_term.lower())
+    if idx == -1:
+        return clean_text[: max_len - 3] + "..."
+    start = max(0, idx - 40)
+    end = min(len(clean_text), start + max_len)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(clean_text) else ""
+    return f"{prefix}{clean_text[start:end]}{suffix}"
+
+
 @app.get("/api/history", response_model=PaginatedHistoryResponse)
 def get_call_history(
     search: Optional[str] = Query(None),
@@ -930,16 +989,31 @@ def get_call_history(
     user: AuthUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Tenant-scoped O(log N) keyset-paginated history using denormalized counters (zero N+1)."""
+    """Tenant-scoped O(log N) keyset-paginated history with FTS transcript search."""
     query = db.query(CallAuditModel).filter(CallAuditModel.org_id == user.org_id)
     if tone and tone.upper() in ("GREEN", "RED"):
         query = query.filter(CallAuditModel.tone_rating == tone.upper())
-    if search and search.strip():
-        term = f"%{search.strip()}%"
+
+    clean_search = search.strip() if search and search.strip() else None
+    is_pg = _is_postgresql(db)
+    if clean_search:
+        term = f"%{clean_search}%"
+        if is_pg:
+            seg_match = sql_text(
+                "to_tsvector('english', transcript_segments.text) @@ plainto_tsquery('english', :q)"
+            ).bindparams(q=clean_search)
+        else:
+            seg_match = TranscriptSegmentModel.text.ilike(term)
+
+        transcript_exists = exists().where(
+            TranscriptSegmentModel.call_id == CallAuditModel.id,
+            seg_match,
+        )
         query = query.filter(
             (CallAuditModel.filename.ilike(term))
             | (CallAuditModel.headline.ilike(term))
             | (CallAuditModel.category.ilike(term))
+            | transcript_exists
         )
 
     parsed_cursor = _parse_cursor(cursor)
@@ -960,22 +1034,50 @@ def get_call_history(
     has_more = len(rows) > limit
     page_rows = rows[:limit]
 
-    items = [
-        CallHistoryItem(
-            id=a.id,
-            filename=a.filename,
-            fileSize=a.file_size or "0 MB",
-            duration=a.duration or "00:00",
-            overallScore=a.overall_score,
-            toneRating=a.tone_rating,
-            category=a.category or "General",
-            headline=a.headline or "",
-            commitmentsCount=a.commitments_count or 0,
-            turnsCount=a.turns_count or 0,
-            createdAt=a.created_at.strftime("%b %d, %Y %H:%M") if a.created_at else "",
+    snippet_by_call: dict[str, tuple[str, str, int]] = {}
+    if clean_search and page_rows:
+        call_ids = [a.id for a in page_rows]
+        if is_pg:
+            seg_filter = sql_text(
+                "to_tsvector('english', transcript_segments.text) @@ plainto_tsquery('english', :q)"
+            ).bindparams(q=clean_search)
+        else:
+            seg_filter = TranscriptSegmentModel.text.ilike(f"%{clean_search}%")
+        matching_segs = (
+            db.query(TranscriptSegmentModel)
+            .filter(TranscriptSegmentModel.call_id.in_(call_ids), seg_filter)
+            .order_by(TranscriptSegmentModel.seconds.asc())
+            .all()
         )
-        for a in page_rows
-    ]
+        for seg in matching_segs:
+            if seg.call_id not in snippet_by_call:
+                snippet_by_call[seg.call_id] = (
+                    _build_snippet(seg.text, clean_search),
+                    seg.timestamp or "00:00",
+                    int(seg.seconds or 0),
+                )
+
+    items = []
+    for a in page_rows:
+        snip = snippet_by_call.get(a.id)
+        items.append(
+            CallHistoryItem(
+                id=a.id,
+                filename=a.filename,
+                fileSize=a.file_size or "0 MB",
+                duration=a.duration or "00:00",
+                overallScore=a.overall_score,
+                toneRating=a.tone_rating,
+                category=a.category or "General",
+                headline=a.headline or "",
+                commitmentsCount=a.commitments_count or 0,
+                turnsCount=a.turns_count or 0,
+                createdAt=a.created_at.strftime("%b %d, %Y %H:%M") if a.created_at else "",
+                matchedSnippet=snip[0] if snip else None,
+                matchedTimestamp=snip[1] if snip else None,
+                matchedSeconds=snip[2] if snip else None,
+            )
+        )
 
     next_cursor = None
     if has_more and page_rows:
@@ -984,6 +1086,55 @@ def get_call_history(
             next_cursor = f"{last.created_at.isoformat()}|{last.id}"
 
     return PaginatedHistoryResponse(items=items, nextCursor=next_cursor, hasMore=has_more)
+
+
+@app.get("/api/search/transcripts", response_model=PaginatedSearchResponse)
+def search_transcripts(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(30, ge=1, le=100),
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Full-text search across spoken transcript turns, strictly scoped to the caller's org."""
+    clean_q = q.strip()
+    if not clean_q:
+        return PaginatedSearchResponse(items=[], hasMore=False)
+
+    query = (
+        db.query(TranscriptSegmentModel, CallAuditModel)
+        .join(CallAuditModel, TranscriptSegmentModel.call_id == CallAuditModel.id)
+        .filter(CallAuditModel.org_id == user.org_id)
+    )
+    if _is_postgresql(db):
+        query = query.filter(
+            sql_text(
+                "to_tsvector('english', transcript_segments.text) @@ plainto_tsquery('english', :q)"
+            ).bindparams(q=clean_q)
+        )
+    else:
+        query = query.filter(TranscriptSegmentModel.text.ilike(f"%{clean_q}%"))
+
+    rows = (
+        query.order_by(desc(CallAuditModel.created_at), TranscriptSegmentModel.seconds.asc())
+        .limit(limit + 1)
+        .all()
+    )
+    has_more = len(rows) > limit
+    hits = [
+        TranscriptSearchHit(
+            callId=audit.id,
+            segmentId=seg.id,
+            filename=audit.filename,
+            toneRating=audit.tone_rating,
+            speaker=seg.speaker,
+            timestamp=seg.timestamp or "00:00",
+            seconds=int(seg.seconds or 0),
+            text=_build_snippet(seg.text, clean_q, max_len=200),
+            createdAt=audit.created_at.strftime("%b %d, %Y %H:%M") if audit.created_at else "",
+        )
+        for seg, audit in rows[:limit]
+    ]
+    return PaginatedSearchResponse(items=hits, hasMore=has_more)
 
 
 @app.get("/api/history/{call_id}")
@@ -1002,6 +1153,60 @@ def get_historical_call_detail(
     return audit.to_report_dict()
 
 
+@app.patch("/api/history/{call_id}/transcript/{segment_id}")
+def update_transcript_segment(
+    call_id: str,
+    segment_id: str,
+    payload: TranscriptSegmentUpdateRequest,
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Persists human-in-the-loop transcript corrections and syncs Tier-1 cache."""
+    audit = (
+        db.query(CallAuditModel)
+        .filter(CallAuditModel.id == call_id, CallAuditModel.org_id == user.org_id)
+        .first()
+    )
+    if not audit:
+        raise HTTPException(status_code=404, detail="Call audit record not found.")
+
+    seg = (
+        db.query(TranscriptSegmentModel)
+        .filter(TranscriptSegmentModel.id == segment_id, TranscriptSegmentModel.call_id == call_id)
+        .first()
+    )
+    if not seg:
+        raise HTTPException(status_code=404, detail="Transcript segment not found.")
+
+    seg.text = payload.text.strip()
+    seg.speaker = payload.speaker.strip()
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="TRANSCRIPT_EDITED",
+        target_id=call_id,
+        metadata={"segmentId": segment_id, "speaker": seg.speaker},
+    )
+    db.commit()
+    db.refresh(seg)
+
+    if audit.audio_hash:
+        cached_base = get_audio_base_cache(audit.audio_hash, org_id=user.org_id)
+        if cached_base and isinstance(cached_base.get("transcript"), list):
+            refreshed_segments = (
+                db.query(TranscriptSegmentModel)
+                .filter(TranscriptSegmentModel.call_id == call_id)
+                .order_by(TranscriptSegmentModel.seconds.asc())
+                .all()
+            )
+            cached_base["transcript"] = [s.to_dict() for s in refreshed_segments]
+            save_audio_base_cache(audit.audio_hash, cached_base, org_id=user.org_id)
+
+    return seg.to_dict()
+
+
 @app.delete("/api/history/{call_id}")
 def delete_historical_call(
     call_id: str,
@@ -1015,6 +1220,15 @@ def delete_historical_call(
     )
     if not audit:
         raise HTTPException(status_code=404, detail="Call record not found.")
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="CALL_DELETED",
+        target_id=call_id,
+        metadata={"filename": audit.filename},
+    )
     db.delete(audit)
     db.commit()
     analytics_single_flight.invalidate(user.org_id)
@@ -1150,6 +1364,430 @@ def get_analytics_overview(user: AuthUser = Depends(get_current_user)):
             db.close()
 
     return analytics_single_flight.get_or_compute(user.org_id, _compute)
+
+
+@app.get("/api/analytics/insights", response_model=CoachingInsightsResponse)
+def get_analytics_insights(
+    user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Computes tenant-scoped coaching insights directly from persisted CallAuditModel & CommitmentModel data."""
+    total_calls = int(
+        db.query(func.count(CallAuditModel.id))
+        .filter(CallAuditModel.org_id == user.org_id)
+        .scalar()
+        or 0
+    )
+    if total_calls == 0:
+        return CoachingInsightsResponse(totalCalls=0)
+
+    # 1. Dimension averages & weakest dimension from sentiment_breakdown across recent calls
+    recent_audits = (
+        db.query(
+            CallAuditModel.sentiment_breakdown,
+            CallAuditModel.category,
+            CallAuditModel.tone_rating,
+        )
+        .filter(CallAuditModel.org_id == user.org_id)
+        .order_by(desc(CallAuditModel.created_at), desc(CallAuditModel.id))
+        .limit(200)
+        .all()
+    )
+    dim_sums: dict[str, float] = {}
+    dim_counts: dict[str, int] = {}
+    for breakdown, _cat, _tone in recent_audits:
+        if isinstance(breakdown, dict):
+            for key, val in breakdown.items():
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    dim_sums[key] = dim_sums.get(key, 0.0) + float(val)
+                    dim_counts[key] = dim_counts.get(key, 0) + 1
+
+    dimension_averages = {
+        k: round(dim_sums[k] / dim_counts[k], 1)
+        for k in sorted(dim_sums.keys())
+        if dim_counts.get(k, 0) > 0
+    }
+    weakest_dim = None
+    weakest_avg = 0.0
+    rep_dims = {k: v for k, v in dimension_averages.items() if k != "customerFrustration"}
+    target_dims = rep_dims if rep_dims else dimension_averages
+    if target_dims:
+        weakest_dim = min(target_dims, key=lambda k: target_dims[k])
+        weakest_avg = target_dims[weakest_dim]
+
+    # 2. Highest RED escalation category via SQL aggregation
+    cat_rows = (
+        db.query(
+            CallAuditModel.category,
+            func.count(CallAuditModel.id),
+            func.coalesce(
+                func.sum(case((CallAuditModel.tone_rating == "RED", 1), else_=0)),
+                0,
+            ),
+        )
+        .filter(CallAuditModel.org_id == user.org_id)
+        .group_by(CallAuditModel.category)
+        .all()
+    )
+    top_cat = None
+    top_rate = 0.0
+    best_red_count = 0
+    for cat_name, cat_total, cat_reds in cat_rows:
+        cat_total_i = int(cat_total or 0)
+        cat_reds_i = int(cat_reds or 0)
+        if cat_total_i > 0 and cat_reds_i > 0:
+            rate = round((cat_reds_i / cat_total_i) * 100.0, 1)
+            if rate > top_rate or (rate == top_rate and cat_reds_i > best_red_count):
+                top_rate = rate
+                top_cat = cat_name or "General Call"
+                best_red_count = cat_reds_i
+
+    # 3. Latest RED evidence quote
+    latest_red = (
+        db.query(CallAuditModel)
+        .filter(CallAuditModel.org_id == user.org_id, CallAuditModel.tone_rating == "RED")
+        .order_by(desc(CallAuditModel.created_at), desc(CallAuditModel.id))
+        .first()
+    )
+    latest_red_quote = None
+    if latest_red:
+        quote_text = ""
+        quotes = latest_red.evidence_quotes if isinstance(latest_red.evidence_quotes, list) else []
+        for q in quotes:
+            if isinstance(q, str) and q.strip():
+                quote_text = q.strip()
+                break
+            if isinstance(q, dict):
+                cand = q.get("quote") or q.get("text") or ""
+                if isinstance(cand, str) and cand.strip():
+                    quote_text = cand.strip()
+                    break
+        if not quote_text:
+            quote_text = (latest_red.headline or latest_red.explanation or "").strip()
+        if quote_text:
+            latest_red_quote = {
+                "callId": latest_red.id,
+                "filename": latest_red.filename,
+                "quote": quote_text,
+                "createdAt": latest_red.created_at.strftime("%b %d, %Y %H:%M") if latest_red.created_at else "",
+            }
+
+    # 4. Commitment deadline grounding rate
+    comm_deadlines = (
+        db.query(CommitmentModel.deadline)
+        .filter(CommitmentModel.org_id == user.org_id)
+        .all()
+    )
+    total_comms = len(comm_deadlines)
+    if total_comms > 0:
+        ungrounded = {"", "not specified", "none", "n/a", "unspecified", "unknown"}
+        grounded_count = sum(
+            1 for (d,) in comm_deadlines if d and str(d).strip().lower() not in ungrounded
+        )
+        deadline_grounding_pct = round((grounded_count / total_comms) * 100.0, 1)
+    else:
+        deadline_grounding_pct = 0.0
+
+    return CoachingInsightsResponse(
+        totalCalls=total_calls,
+        weakestDimension=weakest_dim,
+        weakestDimensionAvg=weakest_avg,
+        dimensionAverages=dimension_averages,
+        topEscalationCategory=top_cat,
+        topEscalationRate=top_rate,
+        latestRedQuote=latest_red_quote,
+        deadlineGroundingPct=deadline_grounding_pct,
+    )
+
+
+# =============================================================================
+# ADMIN WORKSPACE: MEMBERS, AUDIT LOGS & OUTBOUND WEBHOOKS
+# =============================================================================
+
+@app.get("/api/org/members", response_model=list[OrgMemberItem])
+def list_org_members(
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    members = (
+        db.query(UserModel)
+        .filter(UserModel.org_id == user.org_id)
+        .order_by(UserModel.created_at.asc())
+        .all()
+    )
+    return [
+        OrgMemberItem(
+            userId=m.id,
+            email=m.email,
+            fullName=m.full_name or "",
+            role=m.role if m.role in ("ADMIN", "MEMBER") else "MEMBER",
+            createdAt=m.created_at.strftime("%b %d, %Y %H:%M") if m.created_at else "",
+        )
+        for m in members
+    ]
+
+
+@app.post("/api/org/members", response_model=OrgMemberItem, status_code=201)
+def create_org_member(
+    payload: CreateMemberRequest,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    normalized_email = payload.email.strip().lower()
+    if db.query(UserModel).filter(UserModel.email == normalized_email).first():
+        raise HTTPException(status_code=409, detail="An account with this email already exists.")
+
+    new_member = UserModel(
+        email=normalized_email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.fullName.strip(),
+        org_id=user.org_id,
+        role=payload.role,
+    )
+    db.add(new_member)
+    db.flush()
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="MEMBER_CREATED",
+        target_id=new_member.id,
+        metadata={"email": normalized_email, "role": payload.role},
+    )
+    db.commit()
+    db.refresh(new_member)
+    return OrgMemberItem(
+        userId=new_member.id,
+        email=new_member.email,
+        fullName=new_member.full_name or "",
+        role=new_member.role,
+        createdAt=new_member.created_at.strftime("%b %d, %Y %H:%M") if new_member.created_at else "",
+    )
+
+
+@app.patch("/api/org/members/{member_id}/role", response_model=OrgMemberItem)
+def update_org_member_role(
+    member_id: str,
+    payload: UpdateMemberRoleRequest,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    target = (
+        db.query(UserModel)
+        .filter(UserModel.id == member_id, UserModel.org_id == user.org_id)
+        .first()
+    )
+    if not target:
+        raise HTTPException(status_code=404, detail="Organization member not found.")
+
+    if target.id == user.user_id and payload.role != "ADMIN":
+        admin_count = (
+            db.query(func.count(UserModel.id))
+            .filter(UserModel.org_id == user.org_id, UserModel.role == "ADMIN")
+            .scalar()
+            or 0
+        )
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot demote the last workspace administrator.",
+            )
+
+    old_role = target.role
+    target.role = payload.role
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="MEMBER_ROLE_UPDATED",
+        target_id=target.id,
+        metadata={"email": target.email, "previousRole": old_role, "role": payload.role},
+    )
+    db.commit()
+    db.refresh(target)
+    return OrgMemberItem(
+        userId=target.id,
+        email=target.email,
+        fullName=target.full_name or "",
+        role=target.role,
+        createdAt=target.created_at.strftime("%b %d, %Y %H:%M") if target.created_at else "",
+    )
+
+
+@app.get("/api/org/audit-logs", response_model=PaginatedAuditLogsResponse)
+def list_org_audit_logs(
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(AuditLogModel).filter(AuditLogModel.org_id == user.org_id)
+    parsed_cursor = _parse_cursor(cursor)
+    if parsed_cursor:
+        c_dt, c_id = parsed_cursor
+        query = query.filter(
+            or_(
+                AuditLogModel.created_at < c_dt,
+                and_(AuditLogModel.created_at == c_dt, AuditLogModel.id < c_id),
+            )
+        )
+
+    rows = (
+        query.order_by(desc(AuditLogModel.created_at), desc(AuditLogModel.id))
+        .limit(limit + 1)
+        .all()
+    )
+    has_more = len(rows) > limit
+    page_rows = rows[:limit]
+    items = [
+        AuditLogItem(
+            id=row.id,
+            actorEmail=row.actor_email,
+            action=row.action,
+            targetId=row.target_id,
+            metadata=row.metadata_json or {},
+            createdAt=row.created_at.strftime("%b %d, %Y %H:%M:%S") if row.created_at else "",
+        )
+        for row in page_rows
+    ]
+    next_cursor = None
+    if has_more and page_rows and page_rows[-1].created_at:
+        next_cursor = f"{page_rows[-1].created_at.isoformat()}|{page_rows[-1].id}"
+    return PaginatedAuditLogsResponse(items=items, nextCursor=next_cursor, hasMore=has_more)
+
+
+def _webhook_to_item(w: WebhookEndpointModel) -> WebhookEndpointItem:
+    tail = w.secret[-4:] if w.secret and len(w.secret) >= 4 else "****"
+    return WebhookEndpointItem(
+        id=w.id,
+        url=w.url,
+        events=list(w.events_json or []),
+        isActive=bool(w.is_active),
+        secretPreview=f"whsec_...{tail}",
+        createdAt=w.created_at.strftime("%b %d, %Y %H:%M") if w.created_at else "",
+    )
+
+
+@app.get("/api/org/webhooks", response_model=list[WebhookEndpointItem])
+def list_org_webhooks(
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    endpoints = (
+        db.query(WebhookEndpointModel)
+        .filter(WebhookEndpointModel.org_id == user.org_id)
+        .order_by(desc(WebhookEndpointModel.created_at))
+        .all()
+    )
+    return [_webhook_to_item(w) for w in endpoints]
+
+
+@app.post("/api/org/webhooks", response_model=WebhookEndpointItem, status_code=201)
+def create_org_webhook(
+    payload: WebhookCreateRequest,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    try:
+        safe_url = validate_webhook_url(payload.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    secret = f"whsec_{secrets.token_hex(24)}"
+    endpoint = WebhookEndpointModel(
+        org_id=user.org_id,
+        url=safe_url,
+        secret=secret,
+        events_json=list(payload.events),
+        is_active=True,
+    )
+    db.add(endpoint)
+    db.flush()
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="WEBHOOK_CREATED",
+        target_id=endpoint.id,
+        metadata={"url": safe_url, "events": list(payload.events)},
+    )
+    db.commit()
+    db.refresh(endpoint)
+    return _webhook_to_item(endpoint)
+
+
+@app.delete("/api/org/webhooks/{webhook_id}")
+def delete_org_webhook(
+    webhook_id: str,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    endpoint = (
+        db.query(WebhookEndpointModel)
+        .filter(WebhookEndpointModel.id == webhook_id, WebhookEndpointModel.org_id == user.org_id)
+        .first()
+    )
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Webhook endpoint not found.")
+
+    url_snapshot = endpoint.url
+    db.query(WebhookDeliveryModel).filter(
+        WebhookDeliveryModel.endpoint_id == webhook_id,
+        WebhookDeliveryModel.org_id == user.org_id,
+    ).delete(synchronize_session=False)
+    db.delete(endpoint)
+    record_audit_log(
+        db,
+        org_id=user.org_id,
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        action="WEBHOOK_DELETED",
+        target_id=webhook_id,
+        metadata={"url": url_snapshot},
+    )
+    db.commit()
+    return {"status": "deleted", "webhookId": webhook_id}
+
+
+@app.get("/api/org/webhooks/{webhook_id}/deliveries", response_model=list[WebhookDeliveryItem])
+def list_webhook_deliveries(
+    webhook_id: str,
+    user: AuthUser = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    endpoint = (
+        db.query(WebhookEndpointModel)
+        .filter(WebhookEndpointModel.id == webhook_id, WebhookEndpointModel.org_id == user.org_id)
+        .first()
+    )
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Webhook endpoint not found.")
+
+    deliveries = (
+        db.query(WebhookDeliveryModel)
+        .filter(
+            WebhookDeliveryModel.endpoint_id == webhook_id,
+            WebhookDeliveryModel.org_id == user.org_id,
+        )
+        .order_by(desc(WebhookDeliveryModel.created_at))
+        .limit(50)
+        .all()
+    )
+    return [
+        WebhookDeliveryItem(
+            id=d.id,
+            endpointId=d.endpoint_id,
+            eventType=d.event_type,
+            status=d.status,
+            attempts=d.attempts,
+            lastError=d.last_error,
+            createdAt=d.created_at.strftime("%b %d, %Y %H:%M:%S") if d.created_at else "",
+        )
+        for d in deliveries
+    ]
 
 
 if __name__ == "__main__":

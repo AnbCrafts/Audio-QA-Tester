@@ -119,41 +119,42 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
 
   return (
     <div
-      className={`rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur-sm shadow-lg flex flex-col transition-all ${
+      className={`rounded-2xl border border-subtle bg-surface p-6 shadow-sm flex flex-col transition-all ${
         isExpanded ? 'min-h-[850px]' : 'h-[650px]'
       }`}
     >
       {/* Header & Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-subtle">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <MessagesSquare className="h-5 w-5 text-amber-400" />
+            <h3 className="font-display text-base font-extrabold text-ink flex items-center gap-2">
+              <MessagesSquare className="h-5 w-5 text-accent" />
               Full Call Transcript ({transcript.length} Turns)
             </h3>
-            <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-mono text-emerald-400 border border-slate-700">
+            <span className="rounded-full bg-status-green-soft px-2 py-0.5 text-[10px] font-mono font-bold text-status-green border border-status-green/30">
               Complete Conversation
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Scroll up/down to browse all turns from 00:00 to end. Click pencil to edit misheard terms.
+          <p className="text-xs text-ink-muted mt-0.5">
+            Scroll to browse all turns from 00:00 to end. Click edit icon to persist human corrections.
           </p>
         </div>
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2">
-          {/* Scroll Nav Buttons */}
-          <div className="flex items-center bg-slate-950 rounded-lg border border-slate-800 p-0.5">
+          <div className="flex items-center bg-canvas rounded-lg border border-subtle p-0.5">
             <button
+              type="button"
               onClick={scrollToTop}
-              className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-900 rounded transition-colors cursor-pointer"
+              className="p-1.5 text-ink-muted hover:text-accent hover:bg-surface rounded transition-colors cursor-pointer"
               title="Scroll to Top (00:00)"
             >
               <ArrowUp className="h-3.5 w-3.5" />
             </button>
             <button
+              type="button"
               onClick={scrollToBottom}
-              className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-900 rounded transition-colors cursor-pointer"
+              className="p-1.5 text-ink-muted hover:text-accent hover:bg-surface rounded transition-colors cursor-pointer"
               title="Scroll to Bottom"
             >
               <ArrowDown className="h-3.5 w-3.5" />
@@ -161,9 +162,9 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
           </div>
 
           <button
+            type="button"
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
-            title={isExpanded ? 'Collapse height' : 'Expand full height'}
+            className="flex items-center gap-1.5 rounded-lg bg-canvas px-2.5 py-1.5 text-xs font-semibold text-ink hover:border-accent border border-subtle transition-colors cursor-pointer"
           >
             {isExpanded ? (
               <>
@@ -179,18 +180,18 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
           </button>
 
           <button
+            type="button"
             onClick={handleCopyTranscript}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
-            title="Copy entire transcript to clipboard"
+            className="flex items-center gap-1.5 rounded-lg bg-canvas px-2.5 py-1.5 text-xs font-semibold text-ink hover:border-accent border border-subtle transition-colors cursor-pointer"
           >
             <Copy className="h-3.5 w-3.5" />
             <span>{copied ? 'Copied!' : 'Copy'}</span>
           </button>
 
           <button
+            type="button"
             onClick={handleDownloadTranscript}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-950 px-2.5 py-1.5 text-xs text-slate-300 hover:text-white border border-slate-800 transition-colors cursor-pointer"
-            title="Download full transcript as .txt file"
+            className="flex items-center gap-1.5 rounded-lg bg-canvas px-2.5 py-1.5 text-xs font-semibold text-ink hover:border-accent border border-subtle transition-colors cursor-pointer"
           >
             <Download className="h-3.5 w-3.5" />
             <span>Export</span>
@@ -201,43 +202,46 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
       {/* Search & Speaker Filter Bar */}
       <div className="flex items-center justify-between gap-3 pt-3 pb-2">
         <div className="relative flex-1">
-          <Search className="h-3.5 w-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <Search className="h-3.5 w-3.5 text-ink-muted absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search dialogue text or speaker..."
-            className="w-full rounded-lg border border-slate-800 bg-slate-950 pl-8 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+            className="w-full rounded-xl border border-subtle bg-canvas pl-8 pr-3 py-1.5 text-xs text-ink placeholder:text-ink-muted focus:border-accent focus:outline-none"
           />
         </div>
 
-        <div className="flex rounded-lg bg-slate-950 p-1 border border-slate-800 text-xs shrink-0">
+        <div className="flex rounded-xl bg-canvas p-1 border border-subtle text-xs shrink-0">
           <button
+            type="button"
             onClick={() => setFilterSpeaker('all')}
-            className={`rounded px-2.5 py-0.5 font-medium transition-colors cursor-pointer ${
+            className={`rounded-lg px-2.5 py-0.5 font-bold transition-colors cursor-pointer ${
               filterSpeaker === 'all'
-                ? 'bg-amber-500 text-slate-950 font-bold'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-accent text-accent-fg'
+                : 'text-ink-muted hover:text-ink'
             }`}
           >
             All ({transcript.length})
           </button>
           <button
+            type="button"
             onClick={() => setFilterSpeaker('rep')}
-            className={`rounded px-2.5 py-0.5 font-medium transition-colors cursor-pointer ${
+            className={`rounded-lg px-2.5 py-0.5 font-bold transition-colors cursor-pointer ${
               filterSpeaker === 'rep'
-                ? 'bg-indigo-500 text-white font-bold'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-anchor text-ink-anchor'
+                : 'text-ink-muted hover:text-ink'
             }`}
           >
             Rep
           </button>
           <button
+            type="button"
             onClick={() => setFilterSpeaker('customer')}
-            className={`rounded px-2.5 py-0.5 font-medium transition-colors cursor-pointer ${
+            className={`rounded-lg px-2.5 py-0.5 font-bold transition-colors cursor-pointer ${
               filterSpeaker === 'customer'
-                ? 'bg-emerald-500 text-slate-950 font-bold'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-status-green text-white'
+                : 'text-ink-muted hover:text-ink'
             }`}
           >
             Customer
@@ -248,10 +252,10 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
       {/* Scrollable Transcript List */}
       <div
         ref={scrollContainerRef}
-        className="flex-1 overflow-y-auto mt-2 pr-2 space-y-3"
+        className="flex-1 overflow-y-auto mt-2 pr-1 space-y-3"
       >
         {filteredSegments.length === 0 ? (
-          <div className="py-12 text-center text-xs text-slate-500">
+          <div className="py-12 text-center text-xs text-ink-muted">
             No dialogue matching your search filters.
           </div>
         ) : (
@@ -265,33 +269,29 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                 key={seg.id || index}
                 className={`group rounded-xl p-3.5 transition-all border ${
                   isActive
-                    ? 'border-amber-400 bg-amber-500/10 shadow-md'
+                    ? 'border-accent bg-accent-soft shadow-xs'
                     : seg.isFlaggedEvidence
-                    ? 'border-amber-500/40 bg-amber-500/5'
-                    : 'border-slate-800/80 bg-slate-950/50 hover:border-slate-700'
+                    ? 'border-accent/45 bg-accent-soft/50'
+                    : 'border-subtle bg-canvas/70 hover:border-accent/40'
                 }`}
               >
-                {/* Segment Meta */}
                 <div className="flex items-center justify-between text-xs mb-1.5">
-                  <div className="flex items-center gap-2">
-                    {/* Sequence Badge */}
-                    <span className="font-mono text-[10px] text-slate-500 font-semibold">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[10px] text-ink-muted font-semibold">
                       #{index + 1}
                     </span>
 
-                    {/* Speaker Badge */}
                     <span
-                      className={`inline-flex items-center gap-1 font-bold text-[11px] rounded px-2 py-0.5 ${
+                      className={`inline-flex items-center gap-1 font-bold text-[11px] rounded-md px-2 py-0.5 border ${
                         isRep
-                          ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                          : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          ? 'bg-anchor text-ink-anchor border-transparent'
+                          : 'bg-status-green-soft text-status-green border-status-green/30'
                       }`}
                     >
                       <User className="h-3 w-3" />
                       {seg.speaker}
                     </span>
 
-                    {/* Key moment marker: Distinguish Tone Evidence vs Action Commitment */}
                     {(() => {
                       const isToneEvidence = evidenceQuotes?.some(
                         (eq) =>
@@ -307,15 +307,17 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                       if (isToneEvidence && isActionItem) {
                         return (
                           <div className="flex items-center gap-1.5">
-                            <span className={`inline-flex items-center gap-1 rounded text-[10px] font-bold px-1.5 py-0.5 border ${
-                              toneRating === 'RED'
-                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                            }`}>
+                            <span
+                              className={`inline-flex items-center gap-1 rounded text-[10px] font-bold px-1.5 py-0.5 border ${
+                                toneRating === 'RED'
+                                  ? 'bg-status-red-soft text-status-red border-status-red/30'
+                                  : 'bg-status-green-soft text-status-green border-status-green/30'
+                              }`}
+                            >
                               <Sparkles className="h-3 w-3" /> Tone Evidence
                             </span>
-                            <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
-                              📋 Action Commitment
+                            <span className="inline-flex items-center gap-1 rounded bg-accent-soft text-accent text-[10px] font-bold px-1.5 py-0.5 border border-accent/30">
+                              Action Commitment
                             </span>
                           </div>
                         );
@@ -323,11 +325,13 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
 
                       if (isToneEvidence) {
                         return (
-                          <span className={`inline-flex items-center gap-1 rounded text-[10px] font-bold px-1.5 py-0.5 border ${
-                            toneRating === 'RED'
-                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                              : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-                          }`}>
+                          <span
+                            className={`inline-flex items-center gap-1 rounded text-[10px] font-bold px-1.5 py-0.5 border ${
+                              toneRating === 'RED'
+                                ? 'bg-status-red-soft text-status-red border-status-red/30'
+                                : 'bg-status-green-soft text-status-green border-status-green/30'
+                            }`}
+                          >
                             <Sparkles className="h-3 w-3" /> Tone Evidence Quote
                           </span>
                         );
@@ -335,15 +339,15 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
 
                       if (isActionItem) {
                         return (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
-                            📋 Action Commitment
+                          <span className="inline-flex items-center gap-1 rounded bg-accent-soft text-accent text-[10px] font-bold px-1.5 py-0.5 border border-accent/30">
+                            Action Commitment
                           </span>
                         );
                       }
 
                       if (seg.isFlaggedEvidence) {
                         return (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 border border-amber-500/30">
+                          <span className="inline-flex items-center gap-1 rounded bg-accent-soft text-accent text-[10px] font-bold px-1.5 py-0.5 border border-accent/30">
                             <Sparkles className="h-3 w-3" /> Key Moment
                           </span>
                         );
@@ -354,11 +358,11 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {/* Inline Edit Trigger */}
                     {!isEditingThis && (
                       <button
+                        type="button"
                         onClick={() => startEditing(seg)}
-                        className="opacity-0 group-hover:opacity-100 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-all cursor-pointer"
+                        className="opacity-0 group-hover:opacity-100 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-ink-muted hover:text-accent hover:bg-surface transition-all cursor-pointer"
                         title="Fix or edit misheard terms"
                       >
                         <Edit2 className="h-3 w-3" />
@@ -366,10 +370,10 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                       </button>
                     )}
 
-                    {/* Timestamp & Playback Seek */}
                     <button
+                      type="button"
                       onClick={() => onSeekAudio && onSeekAudio(seg.seconds)}
-                      className="flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[11px] text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                      className="flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[11px] text-ink-muted hover:text-accent hover:bg-surface transition-colors cursor-pointer"
                       title="Jump audio to this exact moment"
                     >
                       <Volume2 className="h-3 w-3" />
@@ -378,15 +382,14 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                   </div>
                 </div>
 
-                {/* Dialogue Content or Edit Form */}
                 {isEditingThis ? (
                   <div className="mt-2 space-y-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-400">Speaker:</span>
+                      <span className="text-[11px] text-ink-muted font-semibold">Speaker:</span>
                       <select
                         value={editSpeaker}
                         onChange={(e) => setEditSpeaker(e.target.value)}
-                        className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white focus:border-amber-400 focus:outline-none"
+                        className="rounded-lg border border-subtle bg-surface px-2 py-1 text-xs text-ink focus:border-accent focus:outline-none"
                       >
                         <option value="Sales Rep">Sales Rep</option>
                         <option value="Customer">Customer</option>
@@ -397,28 +400,28 @@ export const TranscriptViewer: React.FC<TranscriptViewerProps> = ({
                       value={editText}
                       onChange={(e) => setEditText(e.target.value)}
                       rows={2}
-                      className="w-full rounded-lg border border-slate-700 bg-slate-900 p-2 text-xs text-white focus:border-amber-400 focus:outline-none"
+                      className="w-full rounded-xl border border-subtle bg-surface p-2 text-xs text-ink focus:border-accent focus:outline-none"
                     />
 
                     <div className="flex items-center justify-end gap-2">
                       <button
+                        type="button"
                         onClick={cancelEdit}
-                        className="flex items-center gap-1 rounded px-2.5 py-1 text-xs text-slate-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                        className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-ink-muted hover:bg-surface transition-colors cursor-pointer"
                       >
                         <X className="h-3 w-3" /> Cancel
                       </button>
                       <button
+                        type="button"
                         onClick={() => saveEdit(seg.id)}
-                        className="flex items-center gap-1 rounded bg-amber-500 px-3 py-1 text-xs font-bold text-slate-950 hover:bg-amber-400 transition-colors cursor-pointer"
+                        className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1 text-xs font-bold text-accent-fg hover:bg-accent-hover transition-colors cursor-pointer"
                       >
                         <Check className="h-3 w-3" /> Save Changes
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-xs leading-relaxed text-slate-200 pl-1">
-                    {seg.text}
-                  </p>
+                  <p className="text-xs leading-relaxed text-ink pl-1">{seg.text}</p>
                 )}
               </div>
             );

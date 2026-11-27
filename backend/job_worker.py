@@ -38,6 +38,7 @@ from cache_service import (
     get_audio_base_cache,
     save_audio_base_cache,
 )
+from webhook_service import dispatch_webhook_event
 
 MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "4")))
 _JOB_SEMAPHORE: Optional[asyncio.Semaphore] = None
@@ -88,6 +89,23 @@ def _update_job(
         db.close()
 
 
+def compute_overall_score(report: AnalysisReport) -> float:
+    """
+    Computes granular 0.5-5.0 overall quality score from Rep demeanor dimensions
+    rather than hardcoding 2.4 on every RED violation.
+    """
+    sb = report.tone.sentimentBreakdown
+    if sb:
+        raw = ((sb.repProfessionalism + sb.repEmpathy + sb.repPatience) / 300.0) * 5.0
+    else:
+        raw = 2.0 if report.tone.rating == "RED" else 4.5
+
+    score = round(raw, 1)
+    if report.tone.rating == "RED":
+        return max(0.5, min(2.9, score))
+    return max(3.0, min(5.0, score))
+
+
 def persist_report_to_db(
     report: AnalysisReport,
     audio_hash: str,
@@ -115,13 +133,7 @@ def persist_report_to_db(
                     report.audioUrl = f"/api/assets/{report.assetId}/stream"
                 return existing.id
 
-        raw_score = 4.5
-        if report.tone.rating == "RED":
-            raw_score = 2.4
-        elif report.tone.sentimentBreakdown:
-            p = report.tone.sentimentBreakdown.repProfessionalism
-            e = report.tone.sentimentBreakdown.repEmpathy
-            raw_score = round(((p + e) / 200.0) * 5.0, 1)
+        raw_score = compute_overall_score(report)
 
         meta = report.callMetadata
         audit = CallAuditModel(
@@ -152,38 +164,44 @@ def persist_report_to_db(
         db.add(audit)
         db.flush()
 
+        seg_pairs = []
         for seg in report.transcript:
-            db.add(
-                TranscriptSegmentModel(
-                    call_id=audit.id,
-                    speaker=seg.speaker,
-                    is_rep=seg.isRep,
-                    timestamp=seg.timestamp,
-                    seconds=seg.seconds,
-                    text=seg.text,
-                    is_flagged_evidence=bool(seg.isFlaggedEvidence),
-                )
+            seg_row = TranscriptSegmentModel(
+                call_id=audit.id,
+                speaker=seg.speaker,
+                is_rep=seg.isRep,
+                timestamp=seg.timestamp,
+                seconds=seg.seconds,
+                text=seg.text,
+                is_flagged_evidence=bool(seg.isFlaggedEvidence),
             )
+            db.add(seg_row)
+            seg_pairs.append((seg, seg_row))
 
+        act_pairs = []
         for act in report.actionItems:
             act.callId = audit.id
-            db.add(
-                CommitmentModel(
-                    org_id=org,
-                    call_id=audit.id,
-                    task=act.task,
-                    owner=act.owner,
-                    deadline=act.deadline,
-                    evidence_quote=act.evidenceQuote,
-                    timestamp=act.timestamp or "00:00",
-                    seconds=act.seconds or 0,
-                    confidence=act.confidence,
-                    status=act.status or "PENDING",
-                )
+            act_row = CommitmentModel(
+                org_id=org,
+                call_id=audit.id,
+                task=act.task,
+                owner=act.owner,
+                deadline=act.deadline,
+                evidence_quote=act.evidenceQuote,
+                timestamp=act.timestamp or "00:00",
+                seconds=act.seconds or 0,
+                confidence=act.confidence,
+                status=act.status or "PENDING",
             )
+            db.add(act_row)
+            act_pairs.append((act, act_row))
 
         db.commit()
         db.refresh(audit)
+        for seg, seg_row in seg_pairs:
+            seg.id = seg_row.id
+        for act, act_row in act_pairs:
+            act.id = act_row.id
         analytics_single_flight.invalidate(org)
 
         report.callId = audit.id
@@ -450,6 +468,28 @@ async def _run_job_inner(job_id: str) -> None:
             call_id=call_id,
             result_json=report.model_dump(),
         )
+
+        # Fire non-blocking outbound webhooks for real-time CRM/Slack notifications
+        base_payload = {
+            "callId": call_id,
+            "fileName": report.fileName,
+            "duration": report.duration,
+            "toneRating": report.tone.rating,
+            "headline": report.tone.headline,
+            "overallScore": compute_overall_score(report),
+            "commitmentsCount": len(report.actionItems),
+        }
+        asyncio.create_task(dispatch_webhook_event(org_id, "call.completed", base_payload))
+        if report.tone.rating == "RED":
+            asyncio.create_task(dispatch_webhook_event(org_id, "call.red_flag_detected", base_payload))
+        if report.actionItems:
+            asyncio.create_task(
+                dispatch_webhook_event(
+                    org_id,
+                    "commitment.created",
+                    {**base_payload, "actionItems": [a.model_dump() for a in report.actionItems]},
+                )
+            )
     except Exception as exc:
         print(f"[Job Error] {job_id} failed: {exc}")
         _update_job(

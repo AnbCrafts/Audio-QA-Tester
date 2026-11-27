@@ -17,6 +17,9 @@ from models import (
     CacheEntryModel,
     TokenUsageLedgerModel,
     IdempotencyRecordModel,
+    AuditLogModel,
+    WebhookEndpointModel,
+    WebhookDeliveryModel,
     utcnow_naive,
 )
 from schemas import (
@@ -57,6 +60,9 @@ def _cleanup_org(org_id: str):
         assets = db.query(AudioAssetModel).filter(AudioAssetModel.org_id == org_id).all()
         for a in assets:
             storage_provider.delete_asset(a.storage_key)
+        db.query(WebhookDeliveryModel).filter(WebhookDeliveryModel.org_id == org_id).delete()
+        db.query(WebhookEndpointModel).filter(WebhookEndpointModel.org_id == org_id).delete()
+        db.query(AuditLogModel).filter(AuditLogModel.org_id == org_id).delete()
         db.query(TokenUsageLedgerModel).filter(TokenUsageLedgerModel.org_id == org_id).delete()
         db.query(IdempotencyRecordModel).filter(IdempotencyRecordModel.org_id == org_id).delete()
         db.query(CacheEntryModel).filter(CacheEntryModel.org_id == org_id).delete()
