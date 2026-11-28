@@ -50,6 +50,8 @@ cache/
 backend/cache/
 uploads/
 backend/uploads/
+backend/sample_audio/sample_*_5*.*
+frontend/public/sample_*_5*.*
 temp/
 *.db
 backend/*.db
