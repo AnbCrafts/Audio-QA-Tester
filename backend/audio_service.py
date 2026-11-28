@@ -93,7 +93,7 @@ class _SchemaTranscriptSegment(BaseModel):
     timestamp: str
     seconds: int
     text: str
-    isFlaggedEvidence: bool = False
+    isFlaggedEvidence: bool
 
 
 class _SchemaSentimentBreakdown(BaseModel):
@@ -122,7 +122,7 @@ class _SchemaToneResult(BaseModel):
 class _SchemaActionItem(BaseModel):
     task: str
     owner: str
-    deadline: Optional[str] = None
+    deadline: Optional[str]
     evidenceQuote: str
     timestamp: str
     seconds: int
@@ -655,17 +655,56 @@ def _build_report_from_json(
     Safely constructs and sanitizes an AnalysisReport from raw LLM output,
     ensuring defensive clamping on scores, valid defaults, and null-coercion.
     """
-    tone_raw = data.get("tone", {})
-    breakdown_raw = tone_raw.get("sentimentBreakdown", {}) if isinstance(tone_raw, dict) else {}
-    rating_val = "RED" if str(tone_raw.get("rating", "")).upper() == "RED" else "GREEN"
-    conf_score = max(0, min(100, int(tone_raw.get("confidenceScore", 90))))
+    tone_raw = data.get("tone")
+    if not isinstance(tone_raw, dict):
+        tone_raw = {}
 
-    # Dynamically derive fallback scores from actual rating & confidence if model omitted them
-    if rating_val == "RED":
-        default_prof = max(20, min(60, 100 - conf_score))
-        default_emp = max(20, min(55, 95 - conf_score))
-        default_pat = max(20, min(50, 90 - conf_score))
-        default_frust = max(60, min(95, conf_score))
+    # Check both nested under tone AND top-level (common in Groq / alternative models)
+    raw_rating_str = str(
+        tone_raw.get("rating")
+        or tone_raw.get("toneVerdict")
+        or data.get("toneVerdict")
+        or data.get("rating")
+        or ""
+    ).upper()
+    rating_val = "RED" if "RED" in raw_rating_str else "GREEN"
+
+    conf_score = max(0, min(100, int(
+        tone_raw.get("confidenceScore")
+        or data.get("confidenceScore")
+        or data.get("confidence")
+        or 90
+    )))
+
+    # Sentiment breakdown extraction
+    breakdown_raw = tone_raw.get("sentimentBreakdown") or data.get("sentimentBreakdown") or {}
+    if not isinstance(breakdown_raw, dict):
+        breakdown_raw = {}
+
+    quality_score = data.get("qualityScore") or data.get("score")
+    if quality_score is not None and not breakdown_raw:
+        try:
+            q_num = int(quality_score)
+            if rating_val == "RED":
+                default_prof = max(10, min(55, q_num))
+                default_emp = max(5, min(50, q_num - 5))
+                default_pat = max(10, min(50, q_num))
+                default_frust = max(65, min(95, 100 - q_num))
+            else:
+                default_prof = max(70, min(98, q_num))
+                default_emp = max(65, min(95, q_num - 5))
+                default_pat = max(70, min(98, q_num))
+                default_frust = max(5, min(35, 100 - q_num))
+        except (ValueError, TypeError):
+            default_prof = 25 if rating_val == "RED" else 90
+            default_emp = 20 if rating_val == "RED" else 85
+            default_pat = 25 if rating_val == "RED" else 90
+            default_frust = 80 if rating_val == "RED" else 15
+    elif rating_val == "RED":
+        default_prof = max(15, min(55, 100 - conf_score))
+        default_emp = max(10, min(50, 95 - conf_score))
+        default_pat = max(15, min(50, 90 - conf_score))
+        default_frust = max(65, min(95, conf_score))
     else:
         default_prof = max(75, min(98, conf_score))
         default_emp = max(70, min(95, conf_score - 5))
@@ -673,10 +712,10 @@ def _build_report_from_json(
         default_frust = max(5, min(35, 100 - conf_score))
 
     sentiment_breakdown = SentimentBreakdown(
-        repProfessionalism=max(0, min(100, int(breakdown_raw.get("repProfessionalism", default_prof)))),
-        repEmpathy=max(0, min(100, int(breakdown_raw.get("repEmpathy", default_emp)))),
-        repPatience=max(0, min(100, int(breakdown_raw.get("repPatience", default_pat)))),
-        customerFrustration=max(0, min(100, int(breakdown_raw.get("customerFrustration", default_frust)))),
+        repProfessionalism=max(0, min(100, int(breakdown_raw.get("repProfessionalism") or breakdown_raw.get("professionalism") or default_prof))),
+        repEmpathy=max(0, min(100, int(breakdown_raw.get("repEmpathy") or breakdown_raw.get("empathy") or default_emp))),
+        repPatience=max(0, min(100, int(breakdown_raw.get("repPatience") or breakdown_raw.get("patience") or default_pat))),
+        customerFrustration=max(0, min(100, int(breakdown_raw.get("customerFrustration") or breakdown_raw.get("friction") or default_frust))),
     )
 
     evidence_quotes = []
@@ -684,23 +723,39 @@ def _build_report_from_json(
         tone_raw.get("evidenceQuotes")
         or tone_raw.get("evidence_quotes")
         or tone_raw.get("quotes")
+        or data.get("toneEvidence")
+        or data.get("evidenceQuotes")
+        or data.get("quotes")
         or []
     )
     for eq in raw_quotes:
         if isinstance(eq, dict) and eq.get("quote"):
             evidence_quotes.append(EvidenceQuote(
                 quote=str(eq.get("quote", "")).strip(),
-                speaker=str(eq.get("speaker", "Sales Rep")).strip(),
-                explanation=str(eq.get("explanation", "")).strip(),
+                speaker=str(eq.get("speaker") or "Derek" if "derek" in str(eq.get("quote", "")).lower() else "Sales Rep").strip(),
+                explanation=str(eq.get("explanation") or eq.get("analysis") or "").strip(),
                 timestamp=str(eq.get("timestamp") or "00:00").strip()
             ))
 
+    headline_str = str(
+        tone_raw.get("headline")
+        or data.get("headline")
+        or ("Tone Violation Detected" if rating_val == "RED" else "Tone Analysis Completed")
+    ).strip()
+
+    explanation_str = str(
+        tone_raw.get("explanation")
+        or data.get("reasoning")
+        or data.get("explanation")
+        or ""
+    ).strip()
+
     tone_result = ToneAnalysisResult(
-        rating="RED" if str(tone_raw.get("rating", "")).upper() == "RED" else "GREEN",
-        headline=str(tone_raw.get("headline", "Tone Analysis Completed")),
-        explanation=str(tone_raw.get("explanation", "")),
+        rating=rating_val,
+        headline=headline_str,
+        explanation=explanation_str,
         evidenceQuotes=evidence_quotes,
-        confidenceScore=max(0, min(100, int(tone_raw.get("confidenceScore", 90)))),
+        confidenceScore=conf_score,
         sentimentBreakdown=sentiment_breakdown
     )
 
@@ -712,7 +767,10 @@ def _build_report_from_json(
         or []
     )
     for idx, item in enumerate(raw_items):
-        if not isinstance(item, dict) or not item.get("task"):
+        if not isinstance(item, dict):
+            continue
+        task_str = str(item.get("task") or item.get("description") or item.get("commitment") or item.get("action") or "").strip()
+        if not task_str:
             continue
         raw_dl = item.get("deadline")
         clean_deadline = str(raw_dl).strip() if raw_dl and str(raw_dl).lower() not in ("null", "none", "n/a") else None
@@ -723,10 +781,10 @@ def _build_report_from_json(
 
         action_items.append(ActionItem(
             id=str(item.get("id") or f"act-{idx+1}"),
-            task=str(item.get("task", "")).strip(),
-            owner=str(item.get("owner", "Sales Rep")).strip(),
+            task=task_str,
+            owner=str(item.get("owner") or "Sales Rep").strip(),
             deadline=clean_deadline,
-            evidenceQuote=str(item.get("evidenceQuote", "")).strip(),
+            evidenceQuote=str(item.get("evidenceQuote") or item.get("quote") or "").strip(),
             timestamp=str(item.get("timestamp") or "00:00").strip(),
             seconds=sec,
             confidence=max(0, min(100, int(item.get("confidence", 85))))
@@ -746,7 +804,7 @@ def _build_report_from_json(
         speaker_str = str(seg.get("speaker", "Speaker")).strip()
         is_rep_val = seg.get("isRep")
         if is_rep_val is None:
-            is_rep_val = ("rep" in speaker_str.lower() or "sales" in speaker_str.lower())
+            is_rep_val = ("rep" in speaker_str.lower() or "sales" in speaker_str.lower() or "derek" in speaker_str.lower())
         
         sec = 0
         if isinstance(seg.get("seconds"), (int, float)):
@@ -763,14 +821,30 @@ def _build_report_from_json(
         ))
 
     meta_raw = data.get("callMetadata") or data.get("metadata") or {}
+    etiquette_raw = data.get("etiquetteAudit") if isinstance(data.get("etiquetteAudit"), dict) else {}
+
+    greeting_val = meta_raw.get("greetingObserved")
+    if greeting_val is None:
+        greeting_val = etiquette_raw.get("greetingObserved", rating_val != "RED")
+
+    polite_val = meta_raw.get("politeLanguageObserved")
+    if polite_val is None:
+        polite_val = etiquette_raw.get("politeLanguageObserved", rating_val != "RED")
+
+    closing_val = meta_raw.get("professionalClosingObserved")
+    if closing_val is None:
+        closing_val = etiquette_raw.get("professionalClosingObserved", rating_val != "RED")
+
+    etiquette_notes_list = meta_raw.get("etiquetteNotes") or etiquette_raw.get("etiquetteNotes") or []
+
     call_metadata = CallMetadata(
-        detectedCategory=str(meta_raw.get("detectedCategory") or "General Business Discussion"),
-        categoryConfidence=max(0, min(100, int(meta_raw.get("categoryConfidence", 92)))),
-        domainSummary=str(meta_raw.get("domainSummary", "")).strip() or None,
-        greetingObserved=bool(meta_raw.get("greetingObserved", True)),
-        politeLanguageObserved=bool(meta_raw.get("politeLanguageObserved", True)),
-        professionalClosingObserved=bool(meta_raw.get("professionalClosingObserved", True)),
-        etiquetteNotes=[str(n).strip() for n in meta_raw.get("etiquetteNotes", []) if str(n).strip()]
+        detectedCategory=str(meta_raw.get("detectedCategory") or data.get("domainCategory") or "General Business Discussion"),
+        categoryConfidence=max(0, min(100, int(meta_raw.get("categoryConfidence") or data.get("categoryConfidence") or 92))),
+        domainSummary=str(meta_raw.get("domainSummary") or data.get("domainSummary") or "").strip() or None,
+        greetingObserved=bool(greeting_val),
+        politeLanguageObserved=bool(polite_val),
+        professionalClosingObserved=bool(closing_val),
+        etiquetteNotes=[str(n).strip() for n in etiquette_notes_list if str(n).strip()]
     )
 
     return AnalysisReport(

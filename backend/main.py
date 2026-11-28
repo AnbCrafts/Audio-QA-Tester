@@ -715,14 +715,47 @@ async def start_async_analysis(
         config_hash = compute_config_hash(config_dict)
         cache_key = f"{asset.sha256}_{config_hash}"
 
+        # Instant Tier-2 Cache Return: Zero worker overhead or step reruns if already analyzed
+        cached_data = get_cached_report(cache_key, org_id=user.org_id)
+        if cached_data and cached_data.get("transcript"):
+            cached_data["cached"] = True
+            cached_data["assetId"] = asset.id
+            cached_data["audioUrl"] = f"/api/assets/{asset.id}/stream"
+            cached_report = AnalysisReport(**cached_data)
+
+            job = AnalysisJobModel(
+                id=str(uuid.uuid4()),
+                org_id=user.org_id,
+                asset_id=asset.id,
+                audio_hash=asset.sha256,
+                config_hash=config_hash,
+                config_json=config_dict,
+                status="COMPLETED",
+                stage_message="Instant Tier-2 cache hit: loaded verified analysis report.",
+                progress_pct=100,
+                total_chunks=1,
+                completed_chunks=1,
+                result_json=cached_report.model_dump(),
+            )
+            db.add(job)
+            db.commit()
+
+            resp_body = {
+                "jobId": job.id,
+                "status": "COMPLETED",
+                "cached": True,
+                "report": cached_report,
+            }
+            complete_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key, resp_body, http_status=200)
+            return AnalysisJobCreateResponse(**resp_body)
+
         # Enforce daily token quota on non-Tier-2-cached runs
-        if not get_cached_report(cache_key, org_id=user.org_id):
-            est_tokens = estimate_audio_tokens(asset.duration_seconds or 30.0)
-            try:
-                assert_org_daily_quota(db, user.org_id, estimated_tokens=est_tokens)
-            except DailyQuotaExceededError as q_err:
-                release_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key)
-                return _quota_exceeded_response(q_err)
+        est_tokens = estimate_audio_tokens(asset.duration_seconds or 30.0)
+        try:
+            assert_org_daily_quota(db, user.org_id, estimated_tokens=est_tokens)
+        except DailyQuotaExceededError as q_err:
+            release_idempotency(user.org_id, "POST", "/api/analyze/async", idempotency_key)
+            return _quota_exceeded_response(q_err)
 
         job = AnalysisJobModel(
             id=str(uuid.uuid4()),

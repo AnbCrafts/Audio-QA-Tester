@@ -271,6 +271,19 @@ export const App: React.FC = () => {
       }
 
       const jobData = await resp.json();
+      if ((jobData.cached || jobData.status === 'COMPLETED') && jobData.report) {
+        setProcessingStep('Instant Tier-2 cache hit: loaded verified analysis report.');
+        setProgressPct(100);
+        setCurrentReport({
+          ...jobData.report,
+          audioUrl: resolveAudioUrl(jobData.report.audioUrl, uploadResult.audioUrl),
+          configUsed: config,
+        });
+        setIsProcessing(false);
+        fetchTokenQuota();
+        return;
+      }
+
       subscribeToJobProgress(jobData.jobId, uploadResult.audioUrl, config);
     } catch (err: any) {
       console.error('Analysis error:', err);
