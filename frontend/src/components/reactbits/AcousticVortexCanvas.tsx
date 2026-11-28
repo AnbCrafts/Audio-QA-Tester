@@ -120,14 +120,14 @@ export const AcousticVortexCanvas: React.FC<{ className?: string }> = ({ classNa
       const focalY = topY + spanY * 0.52;
       const halo = ctx.createRadialGradient(cx, focalY, 6, cx, focalY, maxR * 0.65);
       if (isDay) {
-        halo.addColorStop(0, 'rgba(249, 115, 22, 0.28)');
-        halo.addColorStop(0.45, 'rgba(11, 22, 40, 0.07)');
-        halo.addColorStop(1, 'rgba(243, 234, 216, 0)');
+        halo.addColorStop(0, 'rgba(249, 115, 22, 0.20)');
+        halo.addColorStop(0.45, 'rgba(15, 23, 42, 0.04)');
+        halo.addColorStop(1, 'rgba(248, 250, 252, 0)');
       } else {
-        halo.addColorStop(0, 'rgba(244, 63, 94, 0.24)');
-        halo.addColorStop(0.35, 'rgba(229, 185, 78, 0.16)');
-        halo.addColorStop(0.7, 'rgba(110, 90, 138, 0.08)');
-        halo.addColorStop(1, 'rgba(14, 13, 18, 0)');
+        halo.addColorStop(0, 'rgba(249, 115, 22, 0.24)');
+        halo.addColorStop(0.35, 'rgba(59, 130, 246, 0.10)');
+        halo.addColorStop(0.7, 'rgba(15, 23, 42, 0.04)');
+        halo.addColorStop(1, 'rgba(10, 14, 23, 0)');
       }
       ctx.fillStyle = halo;
       ctx.fillRect(0, 0, w, h);
@@ -225,18 +225,18 @@ export const AcousticVortexCanvas: React.FC<{ className?: string }> = ({ classNa
       {/* Directional bottom gradient fade for razor-sharp overlapped text legibility */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-56"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-64"
         style={{
           background:
-            'linear-gradient(to top, var(--bg-canvas) 12%, color-mix(in srgb, var(--bg-canvas) 75%, transparent) 55%, transparent 100%)',
+            'linear-gradient(to top, var(--bg-surface) 18%, color-mix(in srgb, var(--bg-surface) 80%, transparent) 55%, transparent 100%)',
         }}
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 left-0 w-1/2 hidden md:block"
+        className="pointer-events-none absolute inset-y-0 left-0 w-3/5 hidden md:block"
         style={{
           background:
-            'radial-gradient(ellipse at bottom left, color-mix(in srgb, var(--bg-canvas) 82%, transparent) 0%, transparent 70%)',
+            'radial-gradient(ellipse at bottom left, color-mix(in srgb, var(--bg-surface) 85%, transparent) 0%, transparent 70%)',
         }}
       />
     </div>

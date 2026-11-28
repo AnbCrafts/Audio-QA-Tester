@@ -2,57 +2,57 @@
 
 :root,
 [data-theme="day"] {
-  --bg-canvas: #F3EAD8;            /* Rich Warm Sand */
-  --bg-surface: #FFFFFF;           /* Crisp Elevated Alabaster Card */
-  --bg-surface-elevated: #FAF4E8;
-  --bg-anchor: #0B1628;            /* Deep Authoritative Navy */
-  --bg-anchor-subtle: #142542;
-  --border-subtle: #DFD2BA;        /* Warm Sand Hairline */
-  --border-strong: #C2B193;
-  --text-primary: #0B1628;         /* Deep Navy Ink */
-  --text-secondary: #43536D;       /* Slate Navy */
-  --text-on-anchor: #FAF4E8;
-  --accent-primary: #F97316;       /* Crisp Tangerine */
+  --bg-canvas: #F8FAFC;            /* Clean Slate-50 Canvas */
+  --bg-surface: #FFFFFF;           /* Crisp Pure White Surface */
+  --bg-surface-elevated: #F1F5F9;  /* Elevated Slate-100 Layer */
+  --bg-anchor: #0B132B;            /* Deep Authoritative Navy */
+  --bg-anchor-subtle: #1C2541;
+  --border-subtle: #E2E8F0;        /* Crisp Slate Hairline */
+  --border-strong: #CBD5E1;
+  --text-primary: #0F172A;         /* Slate-900 High Contrast */
+  --text-secondary: #475569;       /* Slate-600 */
+  --text-on-anchor: #F8FAFC;
+  --accent-primary: #F97316;       /* Energetic Tangerine Accent */
   --accent-hover: #EA580C;
   --accent-foreground: #FFFFFF;
-  --accent-soft: rgba(249, 115, 22, 0.12);
-  --accent-glow: rgba(249, 115, 22, 0.24);
-  --status-green: #15803D;
-  --status-green-soft: rgba(21, 128, 61, 0.11);
-  --status-green-border: rgba(21, 128, 61, 0.28);
+  --accent-soft: rgba(249, 115, 22, 0.10);
+  --accent-glow: rgba(249, 115, 22, 0.20);
+  --status-green: #16A34A;
+  --status-green-soft: rgba(22, 163, 74, 0.10);
+  --status-green-border: rgba(22, 163, 74, 0.25);
   --status-red: #DC2626;
-  --status-red-soft: rgba(220, 38, 38, 0.11);
-  --status-red-border: rgba(220, 38, 38, 0.28);
-  --backdrop-blob-1: rgba(249, 115, 22, 0.14);
-  --backdrop-blob-2: rgba(11, 22, 40, 0.08);
-  --backdrop-grid: rgba(11, 22, 40, 0.07);
+  --status-red-soft: rgba(220, 38, 38, 0.10);
+  --status-red-border: rgba(220, 38, 38, 0.25);
+  --backdrop-blob-1: rgba(249, 115, 22, 0.08);
+  --backdrop-blob-2: rgba(15, 23, 42, 0.04);
+  --backdrop-grid: rgba(15, 23, 42, 0.05);
 }
 
 [data-theme="night"] {
-  --bg-canvas: #0E0D12;            /* Deep Charcoal */
-  --bg-surface: #181520;           /* Charcoal-Purple Card */
-  --bg-surface-elevated: #231E2E;  /* Dusty Purple Surface */
-  --bg-anchor: #15121C;
-  --bg-anchor-subtle: #312742;
-  --border-subtle: #2F273F;        /* Dusty Purple Hairline */
-  --border-strong: #4A3D61;
-  --text-primary: #F6F3EC;         /* Warm Ivory */
-  --text-secondary: #A699BE;       /* Muted Dusty Lavender */
-  --text-on-anchor: #F6F3EC;
-  --accent-primary: #E5B94E;       /* Warm Gold */
-  --accent-hover: #F0CA68;
-  --accent-foreground: #121116;
-  --accent-soft: rgba(229, 185, 78, 0.14);
-  --accent-glow: rgba(229, 185, 78, 0.24);
+  --bg-canvas: #0A0E17;            /* Deep Space Obsidian Navy */
+  --bg-surface: #111827;           /* Deep Slate Card */
+  --bg-surface-elevated: #1A2234;  /* Crisp Elevated Surface */
+  --bg-anchor: #070A10;            /* Dark Base Anchor */
+  --bg-anchor-subtle: #131B2E;
+  --border-subtle: rgba(255, 255, 255, 0.09); /* Translucent Hairline */
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --text-primary: #F8FAFC;         /* Crisp White */
+  --text-secondary: #94A3B8;       /* Clean Muted Slate */
+  --text-on-anchor: #F8FAFC;
+  --accent-primary: #F97316;       /* Radiant Tangerine / Amber */
+  --accent-hover: #FB923C;
+  --accent-foreground: #FFFFFF;
+  --accent-soft: rgba(249, 115, 22, 0.14);
+  --accent-glow: rgba(249, 115, 22, 0.28);
   --status-green: #10B981;
   --status-green-soft: rgba(16, 185, 129, 0.14);
   --status-green-border: rgba(16, 185, 129, 0.32);
-  --status-red: #F43F5E;
-  --status-red-soft: rgba(244, 63, 94, 0.14);
-  --status-red-border: rgba(244, 63, 94, 0.34);
-  --backdrop-blob-1: rgba(110, 90, 138, 0.24);
-  --backdrop-blob-2: rgba(229, 185, 78, 0.12);
-  --backdrop-grid: rgba(168, 155, 194, 0.07);
+  --status-red: #EF4444;
+  --status-red-soft: rgba(239, 68, 68, 0.14);
+  --status-red-border: rgba(239, 68, 68, 0.34);
+  --backdrop-blob-1: rgba(249, 115, 22, 0.12);
+  --backdrop-blob-2: rgba(59, 130, 246, 0.09);
+  --backdrop-grid: rgba(255, 255, 255, 0.04);
 }
 
 @theme inline {

@@ -16,8 +16,8 @@ export const ThemeToggle: React.FC<ThemeToggleProps> = ({ className, compact = f
     <button
       type="button"
       onClick={toggleTheme}
-      aria-label={isDay ? 'Switch to Night Mode (Charcoal, Dusty Purple, Gold)' : 'Switch to Day Mode (Navy, Sand, Tangerine)'}
-      title={isDay ? 'Day: Navy / Sand / Tangerine — Click for Night Mode' : 'Night: Charcoal / Dusty Purple / Gold — Click for Day Mode'}
+      aria-label={isDay ? 'Switch to Dark Mode (Obsidian & Amber)' : 'Switch to Light Mode (Slate & Tangerine)'}
+      title={isDay ? 'Light Mode — Click for Dark Mode' : 'Dark Mode — Click for Light Mode'}
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border border-subtle bg-surface-elevated px-2.5 py-1.5 text-[11px] font-bold text-ink hover:border-accent transition-all cursor-pointer shadow-xs',
         className

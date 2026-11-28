@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { animateStaggerIn } from '@/lib/animations';
+import { AmbientBackdrop } from '@/components/reactbits/AmbientBackdrop';
 
 interface LandingPageProps {
   onOpenAuth: (mode: 'login' | 'register') => void;
@@ -126,9 +127,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-canvas text-ink overflow-x-clip">
+    <div className="relative min-h-screen flex flex-col bg-canvas text-ink overflow-x-clip">
+      {/* Subtle Ambient DotGrid & Aurora Aura */}
+      <AmbientBackdrop intensity="hero" />
+
       {/* Clean Minimal Top Bar */}
-      <header className="sticky top-0 z-40 w-full border-b border-subtle bg-canvas/85 backdrop-blur-md">
+      <header className="sticky top-0 z-40 w-full border-b border-subtle bg-canvas/80 backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 sm:px-8 py-3.5">
           <div className="flex items-center gap-2.5">
             <InflectLogo size="sm" />
@@ -172,7 +176,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       <main className="flex-1">
         {/* HERO SECTION — Overlapped Text on Lower Half of Tall Sharp Spiral Tornado */}
         <section className="mx-auto w-full max-w-6xl px-6 sm:px-8 pt-6 pb-10">
-          <div className="relative rounded-3xl border border-subtle bg-canvas overflow-hidden shadow-sm">
+          <div className="relative rounded-3xl border border-subtle bg-surface/75 backdrop-blur-md overflow-hidden shadow-xl shadow-black/5">
             {/* Tall, Sharp Helical Vortex */}
             <AcousticVortexCanvas className="h-[480px] sm:h-[560px]" />
 
@@ -199,7 +203,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
 
             {/* Clean Hairline Bottom Rail */}
-            <div className="relative z-10 border-t border-subtle px-6 sm:px-12 divide-y divide-subtle/70 bg-canvas/80 backdrop-blur-xs">
+            <div className="relative z-10 border-t border-subtle px-6 sm:px-12 divide-y divide-subtle/70 bg-surface/85 backdrop-blur-sm">
               {telemetryRows.map((row) => (
                 <div
                   key={row.step}
@@ -217,46 +221,27 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <FeaturesMarquee onInspectDetail={openDetails} />
       </main>
 
-      {/* Architectural Centered Notched Footer (Footer 2 + Footer 5 fusion) */}
+      {/* Modern Architectural Anchor Footer */}
       <footer className="mx-auto w-full max-w-6xl px-6 sm:px-8 pb-12 pt-4">
-        <div className="relative rounded-3xl border border-subtle overflow-hidden bg-surface-elevated">
-          {/* Subtle vertical architectural ribs peeking behind the notched shoulder */}
+        <div className="relative rounded-3xl border border-subtle overflow-hidden bg-anchor text-ink-anchor px-6 sm:px-12 pt-14 pb-12 shadow-2xl">
+          {/* Subtle Ambient Accent Arc */}
           <div
             aria-hidden="true"
-            className="relative h-24 sm:h-28 w-full"
-            style={{
-              backgroundImage:
-                'repeating-linear-gradient(90deg, var(--bg-surface-elevated) 0px, var(--bg-surface-elevated) 14px, var(--border-subtle) 14px, var(--border-subtle) 18px)',
-            }}
-          >
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  'linear-gradient(135deg, color-mix(in srgb, var(--accent-primary) 14%, transparent) 0%, transparent 55%)',
-              }}
-            />
-          </div>
+            className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-48 rounded-full blur-3xl opacity-25"
+            style={{ background: 'radial-gradient(circle, var(--accent-primary) 0%, transparent 70%)' }}
+          />
 
-          {/* Chamfered Notched Anchor Panel */}
-          <div
-            className="relative -mt-10 bg-anchor text-ink-anchor px-6 sm:px-12 pt-14 pb-10"
-            style={{
-              clipPath:
-                'polygon(0 0, 12% 0, 15.5% 26px, 84.5% 26px, 88% 0, 100% 0, 100% 100%, 0 100%)',
-            }}
-          >
-            {/* Centered Typographic Brand Core (Footer 2 centerpiece) */}
-            <div className="text-center max-w-md mx-auto">
-              <div className="flex justify-center mb-4">
-                <InflectLogo size="lg" className="border-white/15 bg-white/5" />
-              </div>
-              <div className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight leading-none">
-                inflect
-              </div>
-              <div className="mt-1.5 text-sm sm:text-base font-medium opacity-75 tracking-wide">
-                call intelligence
-              </div>
+          {/* Centered Typographic Brand Core */}
+          <div className="relative z-10 text-center max-w-md mx-auto">
+            <div className="flex justify-center mb-4">
+              <InflectLogo size="lg" className="border-white/15 bg-white/5 shadow-inner" />
+            </div>
+            <div className="font-display text-3xl sm:text-5xl font-extrabold tracking-tight leading-none">
+              inflect
+            </div>
+            <div className="mt-1.5 text-sm sm:text-base font-medium opacity-75 tracking-wide">
+              call intelligence
+            </div>
 
               <div className="mt-7 flex items-center justify-center gap-4 text-xs sm:text-sm font-semibold">
                 <button
@@ -422,8 +407,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
             </div>
           </div>
-        </div>
-      </footer>
+        </footer>
 
       {/* On-Demand Technical Details & Presets Drawer (Keeps Landing Clean & Visual-First) */}
       <Sheet open={detailOpen} onOpenChange={setDetailOpen}>

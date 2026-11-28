@@ -280,7 +280,7 @@ export const FeaturesMarquee: React.FC<FeaturesMarqueeProps> = ({ onInspectDetai
       </div>
 
       {/* Opposite-Scrolling Visual Marquee Grid (Features 3 Dual Columns) */}
-      <div className="relative rounded-3xl border border-subtle bg-surface-elevated/60 p-4 sm:p-6 overflow-hidden">
+      <div className="relative rounded-3xl border border-subtle bg-surface-elevated p-4 sm:p-6 overflow-hidden shadow-sm">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 h-[420px] sm:h-[460px] overflow-hidden relative">
           {/* Left Column — Scrolling Up */}
           <div className="marquee-column overflow-hidden h-full">
@@ -301,16 +301,16 @@ export const FeaturesMarquee: React.FC<FeaturesMarqueeProps> = ({ onInspectDetai
           {/* Top & Bottom Soft Fade Masks */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 top-0 h-16 z-10"
+            className="pointer-events-none absolute inset-x-0 top-0 h-20 z-10"
             style={{
-              background: 'linear-gradient(to bottom, var(--bg-surface-elevated), transparent)',
+              background: 'linear-gradient(to bottom, var(--bg-surface-elevated) 20%, transparent)',
             }}
           />
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-16 z-10"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-20 z-10"
             style={{
-              background: 'linear-gradient(to top, var(--bg-surface-elevated), transparent)',
+              background: 'linear-gradient(to top, var(--bg-surface-elevated) 20%, transparent)',
             }}
           />
         </div>
