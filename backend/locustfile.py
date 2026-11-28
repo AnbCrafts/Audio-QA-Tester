@@ -54,9 +54,9 @@ class InflectLoadUser(HttpUser):
     @task(2)
     def view_token_quota(self):
         """Authenticated tenant token quota endpoint."""
-        self.client.get("/api/token-quota", name="/api/token-quota")
+        self.client.get("/api/org/token-quota", name="/api/org/token-quota")
 
     @task(2)
-    def list_calls(self):
+    def list_history(self):
         """Authenticated call history listing."""
-        self.client.get("/api/calls?page=1&page_size=10", name="/api/calls")
+        self.client.get("/api/history?page=1&page_size=10", name="/api/history")
