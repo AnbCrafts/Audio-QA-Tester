@@ -286,7 +286,7 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
     }}
     """
 
-    candidate_llms = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    candidate_llms = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
     for llm in candidate_llms:
         try:
             chat_completion = client.chat.completions.create(
@@ -297,6 +297,7 @@ def _call_groq(file_path: str, filename: str, file_size_str: str, config: Analys
                 model=llm,
                 response_format={"type": "json_object"},
                 temperature=0.2,
+                max_tokens=1000,
             )
             data = json.loads(chat_completion.choices[0].message.content)
             return _build_report_from_json(data, filename, file_size_str, config, engine_name=f"Groq ({llm.split('/')[-1]})")
@@ -403,7 +404,7 @@ def reanalyze_from_transcript(
         try:
             from groq import Groq
             g_client = Groq(api_key=GROQ_KEY)
-            candidate_llms = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+            candidate_llms = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
             for llm in candidate_llms:
                 try:
                     resp = g_client.chat.completions.create(
@@ -414,6 +415,7 @@ def reanalyze_from_transcript(
                         model=llm,
                         response_format={"type": "json_object"},
                         temperature=0.2,
+                        max_tokens=1000,
                     )
                     data = json.loads(resp.choices[0].message.content)
                     engine_name = f"Tier-1 Groq ({llm.split('/')[-1]})"
