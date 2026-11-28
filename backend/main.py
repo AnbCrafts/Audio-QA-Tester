@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 import json
+import time
 import hashlib
 import secrets
 import tempfile
@@ -335,19 +336,59 @@ def get_me(user: AuthUser = Depends(get_current_user)):
 # HEALTH, CACHE & PER-TENANT TOKEN QUOTA ENDPOINTS
 # =============================================================================
 
+_DB_HEALTH_CACHE = {"status": True, "last_checked": 0.0}
+_DB_HEALTH_TTL_SECONDS = 15.0
+_DB_HEALTH_LOCK: Optional[asyncio.Lock] = None
+
+
+def _get_health_lock() -> asyncio.Lock:
+    global _DB_HEALTH_LOCK
+    if _DB_HEALTH_LOCK is None:
+        _DB_HEALTH_LOCK = asyncio.Lock()
+    return _DB_HEALTH_LOCK
+
+
+async def _check_db_healthy_cached() -> bool:
+    """Non-blocking background-cached DB probe to keep /api/health responding in <3ms under load, protected against stampedes."""
+    global _DB_HEALTH_CACHE
+    now = time.monotonic()
+    if now - _DB_HEALTH_CACHE["last_checked"] < _DB_HEALTH_TTL_SECONDS:
+        return _DB_HEALTH_CACHE["status"]
+
+    lock = _get_health_lock()
+    if lock.locked():
+        # Another request is already refreshing the probe; serve stale cached status instantly
+        return _DB_HEALTH_CACHE["status"]
+
+    async with lock:
+        now = time.monotonic()
+        if now - _DB_HEALTH_CACHE["last_checked"] < _DB_HEALTH_TTL_SECONDS:
+            return _DB_HEALTH_CACHE["status"]
+
+        def _probe_db() -> bool:
+            db = SessionLocal()
+            try:
+                db.execute(sql_text("SELECT 1"))
+                return True
+            except Exception:
+                return False
+            finally:
+                db.close()
+
+        status = await asyncio.to_thread(_probe_db)
+        _DB_HEALTH_CACHE["status"] = status
+        _DB_HEALTH_CACHE["last_checked"] = time.monotonic()
+        return status
+
+
 @app.get("/api/health")
-def health_check(db: Session = Depends(get_db)):
+async def health_check():
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    db_ok = False
-    try:
-        db.execute(CallAuditModel.__table__.select().limit(1))
-        db_ok = True
-    except Exception:
-        db_ok = False
+    db_ok = await _check_db_healthy_cached()
 
     return {
-        "status": "healthy",
+        "status": "healthy" if db_ok else "degraded",
         "service": "Inflect Call Intelligence Engine",
         "gemini_configured": bool(gemini_key),
         "groq_configured": bool(groq_key),

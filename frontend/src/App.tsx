@@ -5,13 +5,6 @@ import { ToneCard } from './components/ToneCard';
 import { ActionItemsList } from './components/ActionItemsList';
 import { TranscriptViewer } from './components/TranscriptViewer';
 import { AudioPlayerBar } from './components/AudioPlayerBar';
-import { ConfigDrawer } from './components/ConfigDrawer';
-import { CallHistoryView } from './components/CallHistoryView';
-import { CommitmentsBoard } from './components/CommitmentsBoard';
-import { AnalyticsDashboard } from './components/AnalyticsDashboard';
-import { WorkspaceAdminView } from './components/WorkspaceAdminView';
-import { AuthModal } from './components/AuthModal';
-import { LandingPage } from './components/LandingPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { AmbientBackdrop } from './components/reactbits/AmbientBackdrop';
 import { EqualizerLoader } from './components/reactbits/EqualizerLoader';
@@ -19,6 +12,29 @@ import { BUSINESS_PRESETS } from './data/presets';
 import { AnalysisConfig, AnalysisReport, JobProgressEvent, OrgTokenQuota, UserProfile } from './types';
 import { API_BASE_URL, generateIdempotencyKey } from './config';
 import { uploadFileInChunks } from './utils/uploadClient';
+
+// Lazy-loaded code-split components for lean initial bundle
+const CallHistoryView = React.lazy(() =>
+  import('./components/CallHistoryView').then((m) => ({ default: m.CallHistoryView }))
+);
+const CommitmentsBoard = React.lazy(() =>
+  import('./components/CommitmentsBoard').then((m) => ({ default: m.CommitmentsBoard }))
+);
+const AnalyticsDashboard = React.lazy(() =>
+  import('./components/AnalyticsDashboard').then((m) => ({ default: m.AnalyticsDashboard }))
+);
+const WorkspaceAdminView = React.lazy(() =>
+  import('./components/WorkspaceAdminView').then((m) => ({ default: m.WorkspaceAdminView }))
+);
+const ConfigDrawer = React.lazy(() =>
+  import('./components/ConfigDrawer').then((m) => ({ default: m.ConfigDrawer }))
+);
+const AuthModal = React.lazy(() =>
+  import('./components/AuthModal').then((m) => ({ default: m.AuthModal }))
+);
+const LandingPage = React.lazy(() =>
+  import('./components/LandingPage').then((m) => ({ default: m.LandingPage }))
+);
 import {
   CheckCircle2,
   AlertTriangle,
@@ -549,7 +565,7 @@ export const App: React.FC = () => {
           <p className="text-xs font-mono text-ink-muted">Initializing Inflect Workspace...</p>
         </div>
       ) : !currentUser ? (
-        <>
+        <React.Suspense fallback={<div className="min-h-screen flex items-center justify-center text-ink-muted">Loading Inflect...</div>}>
           <LandingPage
             onOpenAuth={openAuthModal}
             isBackendConnected={isBackendConnected}
@@ -564,7 +580,7 @@ export const App: React.FC = () => {
               fetchTokenQuota();
             }}
           />
-        </>
+        </React.Suspense>
       ) : (
         <div className="relative min-h-screen text-ink flex flex-col">
           <AmbientBackdrop intensity="subtle" />
@@ -724,51 +740,63 @@ export const App: React.FC = () => {
 
             {/* TAB 2: CALL HISTORY */}
             {activeTab === 'history' && (
-              <CallHistoryView onSelectCall={handleSelectHistoricalCall} />
+              <React.Suspense fallback={<div className="flex items-center justify-center py-20 text-xs text-ink-muted">Loading Call History...</div>}>
+                <CallHistoryView onSelectCall={handleSelectHistoricalCall} />
+              </React.Suspense>
             )}
 
             {/* TAB 3: COMMITMENTS BOARD */}
             {activeTab === 'commitments' && (
-              <CommitmentsBoard />
+              <React.Suspense fallback={<div className="flex items-center justify-center py-20 text-xs text-ink-muted">Loading Commitments...</div>}>
+                <CommitmentsBoard />
+              </React.Suspense>
             )}
 
             {/* TAB 4: ANALYTICS DASHBOARD */}
             {activeTab === 'analytics' && (
-              <AnalyticsDashboard />
+              <React.Suspense fallback={<div className="flex items-center justify-center py-20 text-xs text-ink-muted">Loading Analytics...</div>}>
+                <AnalyticsDashboard />
+              </React.Suspense>
             )}
 
             {/* TAB 5: ADMIN WORKSPACE */}
             {activeTab === 'admin' && currentUser?.role === 'ADMIN' && (
-              <WorkspaceAdminView tokenQuota={tokenQuota} onQuotaUpdated={fetchTokenQuota} />
+              <React.Suspense fallback={<div className="flex items-center justify-center py-20 text-xs text-ink-muted">Loading Workspace Admin...</div>}>
+                <WorkspaceAdminView tokenQuota={tokenQuota} onQuotaUpdated={fetchTokenQuota} />
+              </React.Suspense>
             )}
           </main>
 
           {/* Slide-over Configurability Drawer */}
-          <ConfigDrawer
-            isOpen={isConfigOpen}
-            onClose={() => setIsConfigOpen(false)}
-            config={config}
-            onSaveConfig={(newConfig) => setConfig(newConfig)}
-            hasLoadedCall={!!activeFile || !!currentReport?.assetId}
-            onReanalyzeLoadedCall={handleReanalyze}
-          />
+          <React.Suspense fallback={null}>
+            <ConfigDrawer
+              isOpen={isConfigOpen}
+              onClose={() => setIsConfigOpen(false)}
+              config={config}
+              onSaveConfig={(newConfig) => setConfig(newConfig)}
+              hasLoadedCall={!!activeFile || !!currentReport?.assetId}
+              onReanalyzeLoadedCall={handleReanalyze}
+            />
+          </React.Suspense>
 
           {/* Footer */}
           <footer className="border-t border-subtle bg-surface/60 py-4 text-center text-xs text-ink-muted">
             Inflect &bull; Multi-Tenant Conversation Intelligence &amp; Call QA Platform
           </footer>
 
-          <AuthModal
-            isOpen={authModalOpen}
-            initialMode={authModalMode}
-            onClose={() => setAuthModalOpen(false)}
-            onAuthenticated={(user) => {
-              setCurrentUser(user);
-              setAuthModalOpen(false);
-              setErrorMessage(null);
-              fetchTokenQuota();
-            }}
-          />
+          <React.Suspense fallback={null}>
+            <AuthModal
+              isOpen={authModalOpen}
+              initialMode={authModalMode}
+              onClose={() => setAuthModalOpen(false)}
+              onAuthenticated={(user) => {
+                setCurrentUser(user);
+                setAuthModalOpen(false);
+                setErrorMessage(null);
+                fetchTokenQuota();
+              }}
+            />
+          </React.Suspense>
         </div>
       )}
     </ThemeProvider>

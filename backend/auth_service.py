@@ -6,7 +6,10 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from typing import Optional
+from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request
+
+load_dotenv()
 
 # Persistent local dev fallback so uvicorn --reload / workers keep valid sessions when JWT_SECRET_KEY is unset
 _DEV_SECRET_PATH = os.path.join(os.path.dirname(__file__), ".dev_jwt_secret")

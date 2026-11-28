@@ -50,6 +50,14 @@ cache/
 backend/cache/
 uploads/
 backend/uploads/
+
+# Profiling and Benchmarks
+*.prof
+profile_flamegraph.svg
+.benchmarks/
+backend/.benchmarks/
+uploads/
+backend/uploads/
 backend/sample_audio/sample_*_5*.*
 frontend/public/sample_*_5*.*
 temp/
