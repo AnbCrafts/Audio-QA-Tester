@@ -249,26 +249,26 @@ export const FeaturesMarquee: React.FC<FeaturesMarqueeProps> = ({ onInspectDetai
   );
 
   return (
-    <section ref={sectionRef} id="features" className="mx-auto w-[92%] max-w-6xl py-16 sm:py-24">
-      {/* React Bits Pro Features-3 Layout: Header + 2x2 Minimal Icon Highlights */}
-      <div className="max-w-2xl mb-12">
-        <h2 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-ink">
+    <section ref={sectionRef} id="features" className="mx-auto w-full max-w-7xl xl:max-w-[1440px] px-6 sm:px-10 lg:px-12 py-16 sm:py-24">
+      {/* React Bits Pro Features-3 Layout: Header + 4-column Minimal Icon Highlights */}
+      <div className="max-w-4xl mb-12">
+        <h2 className="font-display text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-ink">
           Built for audio intelligence at scale.
         </h2>
-        <p className="mt-3 text-sm sm:text-base text-ink-muted leading-relaxed">
+        <p className="mt-3 text-sm sm:text-base lg:text-lg text-ink-muted leading-relaxed">
           Inspect calls visually first. Click any live capability tile below to explore presets,
           guardrails, and scaling mechanics.
         </p>
 
-        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
+        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {highlights.map((h) => (
             <button
               key={h.label}
               type="button"
               onClick={() => onInspectDetail(h.detailKey)}
-              className="feature-highlight flex items-center gap-3.5 text-left group cursor-pointer"
+              className="feature-highlight flex items-center gap-3.5 text-left group cursor-pointer rounded-2xl border border-subtle bg-surface/60 p-3.5 hover:border-accent hover:bg-surface transition-all shadow-xs"
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-subtle bg-surface group-hover:border-accent transition-colors shadow-xs">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-subtle bg-surface group-hover:border-accent group-hover:bg-accent/10 transition-colors shadow-xs">
                 {h.icon}
               </span>
               <span className="text-xs sm:text-sm font-semibold text-ink group-hover:text-accent transition-colors">
@@ -280,8 +280,8 @@ export const FeaturesMarquee: React.FC<FeaturesMarqueeProps> = ({ onInspectDetai
       </div>
 
       {/* Opposite-Scrolling Visual Marquee Grid (Features 3 Dual Columns) */}
-      <div className="relative rounded-3xl border border-subtle bg-surface-elevated p-4 sm:p-6 overflow-hidden shadow-sm">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 h-[420px] sm:h-[460px] overflow-hidden relative">
+      <div className="relative rounded-3xl border border-subtle bg-surface-elevated p-4 sm:p-8 overflow-hidden shadow-sm">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 h-[440px] sm:h-[480px] lg:h-[520px] overflow-hidden relative">
           {/* Left Column — Scrolling Up */}
           <div className="marquee-column overflow-hidden h-full">
             <div className="flex flex-col gap-4 animate-marquee-up">

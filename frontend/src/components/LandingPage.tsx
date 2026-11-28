@@ -133,7 +133,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       {/* Clean Minimal Top Bar */}
       <header className="sticky top-0 z-40 w-full border-b border-subtle bg-canvas/80 backdrop-blur-md">
-        <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 sm:px-8 py-3.5">
+        <div className="mx-auto flex w-full max-w-7xl xl:max-w-[1440px] items-center justify-between px-6 sm:px-10 lg:px-12 py-3.5">
           <div className="flex items-center gap-2.5">
             <InflectLogo size="sm" />
             <span className="font-display text-sm font-extrabold tracking-tight text-ink">
@@ -175,18 +175,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
       <main className="flex-1">
         {/* HERO SECTION — Overlapped Text on Lower Half of Tall Sharp Spiral Tornado */}
-        <section className="mx-auto w-full max-w-6xl px-6 sm:px-8 pt-6 pb-10">
+        <section className="mx-auto w-full max-w-7xl xl:max-w-[1440px] px-6 sm:px-10 lg:px-12 pt-6 pb-10">
           <div className="relative rounded-3xl border border-subtle bg-surface/75 backdrop-blur-md overflow-hidden shadow-xl shadow-black/5">
             {/* Tall, Sharp Helical Vortex */}
-            <AcousticVortexCanvas className="h-[480px] sm:h-[560px]" />
+            <AcousticVortexCanvas className="h-[500px] sm:h-[580px] lg:h-[620px]" />
 
             {/* Overlapped Lower Hero Typography (Hero 29 composition) */}
-            <div className="relative z-10 -mt-56 sm:-mt-64 px-6 sm:px-12 pb-8">
-              <h1 className="hero-reveal font-display text-4xl sm:text-5xl lg:text-[3.75rem] font-extrabold tracking-tight leading-[1.03] text-ink max-w-2xl">
+            <div className="relative z-10 -mt-60 sm:-mt-68 px-6 sm:px-12 pb-8">
+              <h1 className="hero-reveal font-display text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.03] text-ink max-w-3xl lg:max-w-4xl">
                 <SplitText text="Find the moment a call turns." delayPerWord={50} />
               </h1>
 
-              <p className="hero-reveal mt-4 text-sm sm:text-base text-ink-muted max-w-lg leading-relaxed">
+              <p className="hero-reveal mt-4 text-sm sm:text-base lg:text-lg text-ink-muted max-w-2xl leading-relaxed">
                 See where representative tone shifts, what triggered escalation, and which promises
                 carry real deadlines across hour-long calls.
               </p>
@@ -207,7 +207,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               {telemetryRows.map((row) => (
                 <div
                   key={row.step}
-                  className="hero-reveal py-3 flex items-center justify-between gap-4 text-xs"
+                  className="hero-reveal py-3.5 flex items-center justify-between gap-4 text-xs sm:text-sm"
                 >
                   <span className="font-medium text-ink-muted">{row.step}</span>
                   <span className="font-mono font-bold text-ink shrink-0">{row.metric}</span>
@@ -222,17 +222,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </main>
 
       {/* Modern Architectural Anchor Footer */}
-      <footer className="mx-auto w-full max-w-6xl px-6 sm:px-8 pb-12 pt-4">
-        <div className="relative rounded-3xl border border-subtle overflow-hidden bg-anchor text-ink-anchor px-6 sm:px-12 pt-14 pb-12 shadow-2xl">
+      <footer className="mx-auto w-full max-w-7xl xl:max-w-[1440px] px-6 sm:px-10 lg:px-12 pb-14 pt-4">
+        <div className="relative rounded-3xl border border-subtle overflow-hidden bg-anchor text-ink-anchor px-6 sm:px-14 lg:px-16 pt-16 pb-14 shadow-2xl">
           {/* Subtle Ambient Accent Arc */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[480px] h-48 rounded-full blur-3xl opacity-25"
+            className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 w-[580px] h-52 rounded-full blur-3xl opacity-25"
             style={{ background: 'radial-gradient(circle, var(--accent-primary) 0%, transparent 70%)' }}
           />
 
           {/* Centered Typographic Brand Core */}
-          <div className="relative z-10 text-center max-w-md mx-auto">
+          <div className="relative z-10 text-center max-w-xl mx-auto">
             <div className="flex justify-center mb-4">
               <InflectLogo size="lg" className="border-white/15 bg-white/5 shadow-inner" />
             </div>
