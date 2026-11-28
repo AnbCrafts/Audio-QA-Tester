@@ -9,7 +9,7 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'day',
+  theme: 'night',
   setTheme: () => {},
   toggleTheme: () => {},
 });
@@ -21,9 +21,6 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved === 'day' || saved === 'night') return saved;
-      if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
-        return 'day';
-      }
     } catch {
       // ignore storage errors
     }
