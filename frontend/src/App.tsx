@@ -60,6 +60,8 @@ export const App: React.FC = () => {
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register'>('login');
   const [tokenQuota, setTokenQuota] = useState<OrgTokenQuota | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const activeJobIdRef = useRef<string | null>(null);
+  const uploadAbortControllerRef = useRef<AbortController | null>(null);
 
   const openAuthModal = (mode: 'login' | 'register') => {
     setAuthModalMode(mode);
@@ -166,6 +168,7 @@ export const App: React.FC = () => {
     fallbackAudioUrl: string,
     configToUse: AnalysisConfig
   ) => {
+    activeJobIdRef.current = jobId;
     closeActiveEventSource();
     const es = new EventSource(`${API_BASE_URL}/api/jobs/${jobId}/events`, { withCredentials: true });
     eventSourceRef.current = es;
@@ -178,6 +181,7 @@ export const App: React.FC = () => {
         setProgressPct(Math.max(25, Math.min(100, 25 + Math.round((data.progressPct || 0) * 0.75))));
 
         if (data.status === 'COMPLETED' && data.report) {
+          activeJobIdRef.current = null;
           closeActiveEventSource();
           const report: AnalysisReport = {
             ...data.report,
@@ -188,7 +192,15 @@ export const App: React.FC = () => {
           setProgressPct(100);
           setIsProcessing(false);
           fetchTokenQuota();
+        } else if (data.status === 'CANCELLED') {
+          activeJobIdRef.current = null;
+          closeActiveEventSource();
+          setIsProcessing(false);
+          setProgressPct(0);
+          setProcessingStep('');
+          fetchTokenQuota();
         } else if (data.status === 'FAILED') {
+          activeJobIdRef.current = null;
           closeActiveEventSource();
           setErrorMessage(data.errorMessage || 'Analysis job failed.');
           setIsProcessing(false);
@@ -206,6 +218,7 @@ export const App: React.FC = () => {
         if (pollRes.ok) {
           const pollData: JobProgressEvent = await pollRes.json();
           if (pollData.status === 'COMPLETED' && pollData.report) {
+            activeJobIdRef.current = null;
             const report: AnalysisReport = {
               ...pollData.report,
               audioUrl: resolveAudioUrl(pollData.report.audioUrl, fallbackAudioUrl),
@@ -216,7 +229,15 @@ export const App: React.FC = () => {
             fetchTokenQuota();
             return;
           }
+          if (pollData.status === 'CANCELLED') {
+            activeJobIdRef.current = null;
+            setIsProcessing(false);
+            setProgressPct(0);
+            setProcessingStep('');
+            return;
+          }
           if (pollData.status === 'FAILED') {
+            activeJobIdRef.current = null;
             setErrorMessage(pollData.errorMessage || 'Analysis job failed.');
             setIsProcessing(false);
             return;
@@ -225,12 +246,50 @@ export const App: React.FC = () => {
       } catch {
         // fall through to generic SSE disconnect error
       }
+      activeJobIdRef.current = null;
       setErrorMessage('Lost live connection to analysis job. Please check Call History or retry.');
       setIsProcessing(false);
     };
   };
 
+  const handleCancelAnalysis = async () => {
+    // 1. Abort chunked file upload if in-flight
+    if (uploadAbortControllerRef.current) {
+      try {
+        uploadAbortControllerRef.current.abort();
+      } catch {}
+      uploadAbortControllerRef.current = null;
+    }
+
+    // 2. Terminate active SSE connection
+    closeActiveEventSource();
+
+    // 3. Signal backend job worker cancellation
+    const jobId = activeJobIdRef.current;
+    if (jobId) {
+      try {
+        await fetch(`${API_BASE_URL}/api/jobs/${jobId}/cancel`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+      } catch (err) {
+        console.warn('Failed to call job cancel endpoint:', err);
+      }
+      activeJobIdRef.current = null;
+    }
+
+    // 4. Return UI to responsive ready state
+    setIsProcessing(false);
+    setProgressPct(0);
+    setProcessingStep('');
+    fetchTokenQuota();
+  };
+
   const handleFileUpload = async (file: File) => {
+    const abortCtrl = new AbortController();
+    uploadAbortControllerRef.current = abortCtrl;
+    activeJobIdRef.current = null;
+
     setActiveFile(file);
     setStagedFile(null);
     setIsProcessing(true);
@@ -240,11 +299,16 @@ export const App: React.FC = () => {
     setProcessingStep('Fingerprinting & preparing chunked upload...');
 
     try {
-      const uploadResult = await uploadFileInChunks(file, API_BASE_URL, (uploadPct, stepText) => {
-        // Upload phase fills 0..25% of total bar; AI worker fills 25..100%
-        setProgressPct(Math.max(2, Math.round(uploadPct * 0.25)));
-        setProcessingStep(stepText);
-      });
+      const uploadResult = await uploadFileInChunks(
+        file,
+        API_BASE_URL,
+        (uploadPct, stepText) => {
+          // Upload phase fills 0..25% of total bar; AI worker fills 25..100%
+          setProgressPct(Math.max(2, Math.round(uploadPct * 0.25)));
+          setProcessingStep(stepText);
+        },
+        abortCtrl.signal
+      );
 
       setProgressPct(26);
       setProcessingStep('Queueing background AI analysis job...');
@@ -252,6 +316,7 @@ export const App: React.FC = () => {
       const resp = await fetch(`${API_BASE_URL}/api/analyze/async`, {
         method: 'POST',
         credentials: 'include',
+        signal: abortCtrl.signal,
         headers: {
           'Content-Type': 'application/json',
           'Idempotency-Key': generateIdempotencyKey(),
@@ -286,6 +351,13 @@ export const App: React.FC = () => {
 
       subscribeToJobProgress(jobData.jobId, uploadResult.audioUrl, config);
     } catch (err: any) {
+      if (err.name === 'AbortError' || /aborted/i.test(err.message)) {
+        console.log('Analysis aborted by user.');
+        setIsProcessing(false);
+        setProgressPct(0);
+        setProcessingStep('');
+        return;
+      }
       console.error('Analysis error:', err);
       closeActiveEventSource();
       const msg = err.message || 'Failed to upload or analyze call recording.';
@@ -543,6 +615,7 @@ export const App: React.FC = () => {
                   onOpenConfig={() => setIsConfigOpen(true)}
                   stagedFile={stagedFile}
                   onStageFile={(f) => setStagedFile(f)}
+                  onCancelAnalysis={handleCancelAnalysis}
                 />
 
                 {/* Error Message */}

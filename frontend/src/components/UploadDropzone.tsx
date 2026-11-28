@@ -6,6 +6,7 @@ import {
   Paperclip,
   Sliders,
   Sparkles,
+  Square,
   X,
   AlertCircle,
   Loader2,
@@ -24,6 +25,7 @@ interface UploadDropzoneProps {
   onOpenConfig?: () => void;
   stagedFile?: File | null;
   onStageFile?: (file: File | null) => void;
+  onCancelAnalysis?: () => void;
 }
 
 const WAVEFORM_HEIGHTS = [
@@ -41,6 +43,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   onOpenConfig,
   stagedFile = null,
   onStageFile,
+  onCancelAnalysis,
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -223,12 +226,25 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
         <span className="font-medium text-ink-muted">Audio QA Composer</span>
 
         {isProcessing ? (
-          <div className="inline-flex items-center gap-2 font-mono text-ink-muted">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
-            <span className="text-ink font-semibold">Analyzing</span>
-            <span>{formatTimer(elapsedSec)}</span>
-            {progressPct > 0 && (
-              <span className="text-accent font-bold">&bull; {progressPct}%</span>
+          <div className="flex items-center gap-3">
+            <div className="inline-flex items-center gap-2 font-mono text-ink-muted">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+              <span className="text-ink font-semibold">Analyzing</span>
+              <span>{formatTimer(elapsedSec)}</span>
+              {progressPct > 0 && (
+                <span className="text-accent font-bold">&bull; {progressPct}%</span>
+              )}
+            </div>
+            {onCancelAnalysis && (
+              <button
+                type="button"
+                onClick={onCancelAnalysis}
+                className="inline-flex items-center gap-1 rounded-md border border-status-red/40 bg-status-red/10 px-2 py-0.5 text-[11px] font-semibold text-status-red hover:bg-status-red hover:text-white transition-colors cursor-pointer"
+                title="Stop active analysis"
+              >
+                <Square className="h-2.5 w-2.5 fill-current" />
+                <span>Stop</span>
+              </button>
             )}
           </div>
         ) : (
@@ -423,28 +439,41 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
             </span>
           </div>
 
-          <button
-            type="button"
-            disabled={isProcessing}
-            onClick={handlePrimarySubmit}
-            aria-label={stagedFile ? 'Analyze Staged Recording' : 'Select Audio Recording'}
-            title={stagedFile ? 'Run QA Audit' : 'Browse Audio File'}
-            className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 ${
-              stagedFile
-                ? 'bg-accent text-accent-fg hover:bg-accent-hover shadow-xs'
-                : 'bg-surface border border-subtle text-ink-muted hover:border-accent hover:text-accent'
-            }`}
-          >
-            {stagedFile ? (
-              <>
-                <Sparkles className="h-3.5 w-3.5" />
-                <span>Analyze</span>
+          {isProcessing ? (
+            <button
+              type="button"
+              onClick={onCancelAnalysis}
+              aria-label="Stop Analysis"
+              title="Cancel current analysis execution"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-status-red/50 bg-status-red/15 px-3 text-xs font-bold text-status-red hover:bg-status-red hover:text-white transition-all cursor-pointer shadow-xs"
+            >
+              <Square className="h-3 w-3 fill-current" />
+              <span>Stop Analysis</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={isProcessing}
+              onClick={handlePrimarySubmit}
+              aria-label={stagedFile ? 'Analyze Staged Recording' : 'Select Audio Recording'}
+              title={stagedFile ? 'Run QA Audit' : 'Browse Audio File'}
+              className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-bold transition-all cursor-pointer disabled:opacity-50 ${
+                stagedFile
+                  ? 'bg-accent text-accent-fg hover:bg-accent-hover shadow-xs'
+                  : 'bg-surface border border-subtle text-ink-muted hover:border-accent hover:text-accent'
+              }`}
+            >
+              {stagedFile ? (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>Analyze</span>
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </>
+              ) : (
                 <ArrowUp className="h-3.5 w-3.5" />
-              </>
-            ) : (
-              <ArrowUp className="h-3.5 w-3.5" />
-            )}
-          </button>
+              )}
+            </button>
+          )}
         </div>
       </div>
 

@@ -2,7 +2,7 @@ import os
 import shutil
 import asyncio
 from datetime import timedelta
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from database import SessionLocal
 from models import (
     AnalysisJobModel,
@@ -42,6 +42,8 @@ from webhook_service import dispatch_webhook_event
 
 MAX_CONCURRENT_JOBS = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "4")))
 _JOB_SEMAPHORE: Optional[asyncio.Semaphore] = None
+_ACTIVE_JOB_TASKS: Dict[str, asyncio.Task] = {}
+_JOB_CANCELLATION_REQUESTED: Set[str] = set()
 
 
 def _get_job_semaphore() -> asyncio.Semaphore:
@@ -49,6 +51,47 @@ def _get_job_semaphore() -> asyncio.Semaphore:
     if _JOB_SEMAPHORE is None:
         _JOB_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
     return _JOB_SEMAPHORE
+
+
+def cancel_job(job_id: str, org_id: str = "default-org") -> bool:
+    """
+    Cancels an active or queued analysis job:
+    - Sets status to CANCELLED in database
+    - Signals cancellation to worker loop
+    - Cancels active asyncio task if running
+    - Cleans up any temporary chunk directories
+    """
+    db = SessionLocal()
+    try:
+        job = db.query(AnalysisJobModel).filter(
+            AnalysisJobModel.id == job_id,
+            AnalysisJobModel.org_id == org_id,
+        ).first()
+        if not job:
+            return False
+
+        terminal_states = ("COMPLETED", "FAILED", "CANCELLED")
+        if job.status in terminal_states:
+            return False
+
+        _JOB_CANCELLATION_REQUESTED.add(job_id)
+        job.status = "CANCELLED"
+        job.stage_message = "Analysis stopped by user."
+        job.error_message = "Job cancelled by user"
+        db.commit()
+
+        # Clean up tmp chunks if created
+        job_tmp_dir = os.path.join(TMP_CHUNKS_DIR, f"job_{job_id}")
+        if os.path.isdir(job_tmp_dir):
+            shutil.rmtree(job_tmp_dir, ignore_errors=True)
+
+        task = _ACTIVE_JOB_TASKS.get(job_id)
+        if task and not task.done():
+            task.cancel()
+
+        return True
+    finally:
+        db.close()
 
 
 def _update_job(
@@ -218,9 +261,32 @@ def persist_report_to_db(
 
 async def execute_analysis_job(job_id: str) -> None:
     """Bounded async worker running analysis jobs behind MAX_CONCURRENT_JOBS semaphore."""
-    sem = _get_job_semaphore()
-    async with sem:
-        await _run_job_inner(job_id)
+    curr_task = asyncio.current_task()
+    if curr_task:
+        _ACTIVE_JOB_TASKS[job_id] = curr_task
+    try:
+        sem = _get_job_semaphore()
+        async with sem:
+            if job_id in _JOB_CANCELLATION_REQUESTED:
+                _update_job(
+                    job_id,
+                    status="CANCELLED",
+                    stage_message="Analysis stopped by user.",
+                    error_message="Job cancelled by user",
+                )
+                return
+            await _run_job_inner(job_id)
+    except asyncio.CancelledError:
+        print(f"[Job Worker] Job {job_id} cancelled via asyncio task cancellation.")
+        _update_job(
+            job_id,
+            status="CANCELLED",
+            stage_message="Analysis stopped by user.",
+            error_message="Job cancelled by user",
+        )
+    finally:
+        _ACTIVE_JOB_TASKS.pop(job_id, None)
+        _JOB_CANCELLATION_REQUESTED.discard(job_id)
 
 
 async def _run_job_inner(job_id: str) -> None:
@@ -252,7 +318,12 @@ async def _run_job_inner(job_id: str) -> None:
 
     job_tmp_dir = os.path.join(TMP_CHUNKS_DIR, f"job_{job_id}")
 
+    def _check_cancelled():
+        if job_id in _JOB_CANCELLATION_REQUESTED:
+            raise asyncio.CancelledError(f"Job {job_id} cancelled by user")
+
     try:
+        _check_cancelled()
         # 1. Tenant-Scoped Tier-2 Cache Check
         cached_data = get_cached_report(cache_key, org_id=org_id)
         if cached_data and cached_data.get("transcript"):
@@ -299,8 +370,10 @@ async def _run_job_inner(job_id: str) -> None:
             return
 
         if duration_sec <= 0:
+            _check_cancelled()
             duration_sec = await asyncio.to_thread(probe_audio_duration, file_path)
 
+        _check_cancelled()
         # 3. Short Audio (< 12 min) -> Single-Pass Multimodal
         if duration_sec < CHUNKING_THRESHOLD_SECONDS:
             _update_job(
@@ -320,10 +393,12 @@ async def _run_job_inner(job_id: str) -> None:
                 org_id=org_id,
                 job_id=job_id,
             )
+            _check_cancelled()
         else:
             # 4. Lengthy Audio (>= 12 min, e.g. 1-Hour+) -> Silence-Aware Map-Reduce
             _update_job(job_id, status="SPLITTING", stage_message="Scanning natural pauses & splitting lengthy audio...", progress_pct=8)
             silences = await asyncio.to_thread(detect_silences, file_path)
+            _check_cancelled()
             windows = plan_split_windows(duration_sec, silences)
             total_chunks = len(windows)
             os.makedirs(job_tmp_dir, exist_ok=True)
@@ -356,6 +431,7 @@ async def _run_job_inner(job_id: str) -> None:
             speaker_context = ""
 
             for idx, (start_sec, end_sec) in enumerate(windows):
+                _check_cancelled()
                 if idx in cached_chunks_by_idx:
                     row = cached_chunks_by_idx[idx]
                     segs = row.transcript_json or []
@@ -425,9 +501,11 @@ async def _run_job_inner(job_id: str) -> None:
                     progress_pct=15 + int(((idx + 1) / total_chunks) * 65),
                 )
 
+            _check_cancelled()
             _update_job(job_id, status="MERGING", stage_message="Merging chunks & deduplicating boundaries...", progress_pct=85)
             merged_segments, combined_notes = await asyncio.to_thread(merge_chunk_transcripts, chunk_records)
 
+            _check_cancelled()
             _update_job(job_id, status="REDUCING", stage_message="Auditing holistic tone, etiquette & commitments...", progress_pct=92)
             duration_str = format_timestamp(duration_sec)
             report = await asyncio.to_thread(
@@ -442,6 +520,7 @@ async def _run_job_inner(job_id: str) -> None:
                 job_id,
             )
 
+        _check_cancelled()
         report.assetId = asset_id
         report.audioUrl = f"/api/assets/{asset_id}/stream"
 
@@ -490,6 +569,14 @@ async def _run_job_inner(job_id: str) -> None:
                     {**base_payload, "actionItems": [a.model_dump() for a in report.actionItems]},
                 )
             )
+    except asyncio.CancelledError:
+        print(f"[Job Worker] Job {job_id} cancelled by user.")
+        _update_job(
+            job_id,
+            status="CANCELLED",
+            stage_message="Analysis stopped by user.",
+            error_message="Job cancelled by user",
+        )
     except Exception as exc:
         print(f"[Job Error] {job_id} failed: {exc}")
         _update_job(

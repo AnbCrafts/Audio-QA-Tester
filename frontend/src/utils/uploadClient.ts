@@ -106,11 +106,15 @@ class IncrementalSha256 {
 
 export async function computeStreamingSha256(
   file: File,
-  onProgress?: (pct: number) => void
+  onProgress?: (pct: number) => void,
+  signal?: AbortSignal
 ): Promise<string> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
   // Fast native path for small files <= 32 MB when crypto.subtle is available
   if (file.size <= 32 * 1024 * 1024 && typeof crypto !== 'undefined' && crypto.subtle) {
     const buf = await file.arrayBuffer();
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const hashBuf = await crypto.subtle.digest('SHA-256', buf);
     onProgress?.(100);
     return Array.from(new Uint8Array(hashBuf))
@@ -121,6 +125,7 @@ export async function computeStreamingSha256(
   const hasher = new IncrementalSha256();
   let offset = 0;
   while (offset < file.size) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const end = Math.min(offset + HASH_SLICE_BYTES, file.size);
     const chunkBuf = await file.slice(offset, end).arrayBuffer();
     hasher.update(new Uint8Array(chunkBuf));
@@ -139,16 +144,21 @@ export interface ChunkUploadResult {
 export async function uploadFileInChunks(
   file: File,
   apiBaseUrl: string,
-  onStatus: (pct: number, stepText: string) => void
+  onStatus: (pct: number, stepText: string) => void,
+  signal?: AbortSignal
 ): Promise<ChunkUploadResult> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   onStatus(2, 'Fingerprinting audio (SHA-256) for deduplication...');
   const sha256 = await computeStreamingSha256(file, (hashPct) => {
     onStatus(Math.max(2, Math.round(hashPct * 0.08)), `Fingerprinting audio (${hashPct}%)...`);
-  });
+  }, signal);
+
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   const initRes = await fetch(`${apiBaseUrl}/api/uploads/init`, {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       filename: file.name,
@@ -180,6 +190,7 @@ export async function uploadFileInChunks(
   const completedSet = new Set<number>(receivedChunks);
 
   for (let idx = 0; idx < totalChunks; idx++) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     if (completedSet.has(idx)) {
       const pct = 10 + Math.round(((idx + 1) / totalChunks) * 85);
       onStatus(pct, `Resuming upload: skipped verified chunk ${idx + 1}/${totalChunks}`);
@@ -192,6 +203,7 @@ export async function uploadFileInChunks(
 
     let lastErr: Error | null = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       try {
         const fd = new FormData();
         fd.append('chunk', slice, `${file.name}.part${idx}`);
@@ -199,6 +211,7 @@ export async function uploadFileInChunks(
         const chunkRes = await fetch(`${apiBaseUrl}/api/uploads/${uploadId}/chunk/${idx}`, {
           method: 'PUT',
           credentials: 'include',
+          signal,
           body: fd,
         });
         if (!chunkRes.ok) {
@@ -213,6 +226,7 @@ export async function uploadFileInChunks(
         lastErr = null;
         break;
       } catch (err: any) {
+        if (signal?.aborted || err.name === 'AbortError') throw err;
         lastErr = err;
         if (err.nonRetryable || attempt === 3) break;
         await new Promise((r) => setTimeout(r, 600 * attempt));
@@ -225,10 +239,12 @@ export async function uploadFileInChunks(
     onStatus(pct, `Uploading audio chunk ${idx + 1} of ${totalChunks} (${pct}%)...`);
   }
 
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
   onStatus(97, 'Verifying checksum & assembling audio asset...');
   const completeRes = await fetch(`${apiBaseUrl}/api/uploads/${uploadId}/complete`, {
     method: 'POST',
     credentials: 'include',
+    signal,
   });
   if (!completeRes.ok) {
     const errJson = await completeRes.json().catch(() => ({}));

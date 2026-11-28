@@ -81,6 +81,7 @@ from storage_service import (
 )
 from job_worker import (
     execute_analysis_job,
+    cancel_job,
     persist_report_to_db,
     recover_orphaned_jobs_on_startup,
 )
@@ -786,6 +787,21 @@ async def start_async_analysis(
         raise
 
 
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_analysis_job_endpoint(
+    job_id: str,
+    user: AuthUser = Depends(get_current_user),
+):
+    """Cancels an active or queued analysis job and releases resources."""
+    success = cancel_job(job_id, org_id=user.org_id)
+    return {
+        "jobId": job_id,
+        "status": "CANCELLED" if success else "UNCHANGED",
+        "cancelled": success,
+        "message": "Analysis job stopped successfully." if success else "Job is already completed, failed, or not found.",
+    }
+
+
 @app.get("/api/jobs/{job_id}", response_model=AnalysisJobStatusResponse)
 def get_job_status(
     job_id: str,
@@ -857,7 +873,7 @@ async def stream_job_events(
                     last_signature = sig
                     yield f"data: {json.dumps(payload)}\n\n"
 
-                if job.status in ("COMPLETED", "FAILED"):
+                if job.status in ("COMPLETED", "FAILED", "CANCELLED"):
                     break
             finally:
                 db.close()
