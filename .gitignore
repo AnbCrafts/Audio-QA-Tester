@@ -58,6 +58,7 @@ backend/*.db
 backend/scaleworks.db
 backend/inflect.db
 *.tmp
+*.report.html
 
 # OS & Editor
 .DS_Store
